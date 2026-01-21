@@ -1,0 +1,67 @@
+# AI Configuration File
+
+# Default provider
+default_provider: deepseek
+
+# Provider configurations
+providers:
+  # OpenAI configuration
+  openai:
+    api_base: https://api.openai.com/v1
+    api_key: ${OPENAI_API_KEY}
+    model: gpt-4o-mini
+    temperature: 0.3
+    timeout: 30
+
+  # DeepSeek configuration
+  deepseek:
+    api_base: https://api.deepseek.com/v1
+    api_key: ${DEEPSEEK_API_KEY}
+    model: deepseek-chat
+    temperature: 0.3
+    timeout: 30
+
+  # Ollama configuration (local)
+  ollama:
+    api_base: http://localhost:11434/v1
+    api_key: ollama
+    model: llama3.2:3b
+    temperature: 0.3
+    timeout: 60
+
+  # Custom provider (OpenAI-compatible)
+  custom:
+    api_base: ${CUSTOM_API_BASE}
+    api_key: ${CUSTOM_API_KEY}
+    model: ${CUSTOM_MODEL:-gpt-4o-mini}
+    temperature: 0.3
+    timeout: 30
+
+# Classification prompt template
+classification_prompt: |
+  You are a professional financial accounting assistant responsible for classifying transactions into the Beancount chart of accounts.
+
+  User chart of accounts:
+  {chart_of_accounts}
+
+  Historical classification rules:
+  {historical_rules}
+
+  Transaction to classify:
+  - Payee: {peer}
+  - Item: {item}
+  - Category: {category}
+  - Transaction type: {type}
+  - Time: {time}
+  - Amount: {amount}
+
+  Please analyze the above transaction, select the most appropriate account from the chart of accounts, and provide a confidence score (0-1).
+
+  Output format (JSON):
+  {{
+    "account": "Expenses:Food:Dining",
+    "confidence": 0.95,
+    "reasoning": "Explain the classification reason"
+  }}
+
+  Return only JSON, do not include any other content.

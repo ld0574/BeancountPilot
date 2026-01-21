@@ -1,0 +1,139 @@
+# Application configuration file
+
+# Application information
+app:
+  name: BeancountPilot
+  version: 0.1.0
+  description: AI-enhanced intelligent transaction classification and workflow enhancement tool
+
+# Server configuration
+server:
+  host: 0.0.0.0
+  port: 8000
+  debug: false
+  reload: false
+
+# API configuration
+api:
+  # API prefix
+  prefix: /api
+  
+  # CORS configuration
+  cors:
+    allow_origins:
+      - "*"
+    allow_credentials: true
+    allow_methods:
+      - "*"
+    allow_headers:
+      - "*"
+  
+  # Rate limit configuration
+  rate_limit:
+    enabled: false
+    requests_per_minute: 60
+  
+  # Timeout configuration
+  timeout: 30
+
+# Frontend configuration
+frontend:
+  # Streamlit configuration
+  streamlit:
+    port: 8501
+    headless: false
+    gather_usage_stats: false
+  
+  # API configuration
+  api:
+    # Backend API URL
+    base_url: http://localhost:8000
+    # API prefix
+    prefix: /api
+    # Health check endpoint
+    health_endpoint: /health
+    # Timeout (seconds)
+    timeout: 30
+  
+  # Default chart of accounts
+  default_chart_of_accounts: |
+    Assets:Bank:Alipay
+    Assets:Bank:WeChat
+    Assets:Bank:Cash
+    Expenses:Food:Dining
+    Expenses:Food:Groceries
+    Expenses:Transport:Taxi
+    Expenses:Transport:Subway
+    Expenses:Shopping:Clothing
+    Expenses:Shopping:Electronics
+    Expenses:Entertainment:Movies
+    Expenses:Entertainment:Games
+    Expenses:Utilities:Phone
+    Expenses:Utilities:Internet
+    Expenses:Utilities:Electricity
+    Expenses:Health:Medicine
+    Expenses:Health:Insurance
+    Expenses:Education:Books
+    Expenses:Education:Courses
+    Expenses:Travel:Hotels
+    Expenses:Travel:Transport
+    Expenses:Misc
+    Income:Salary
+    Income:Investment
+    Income:Other
+
+# Logging configuration
+logging:
+  # Log level
+  level: INFO
+  
+  # Log format
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # Log file
+  file: ~/.beancountpilot/logs/app.log
+  
+  # Maximum log file size (MB)
+  max_file_size: 10
+  
+  # Number of backup log files to keep
+  backup_count: 5
+
+# Data directory configuration
+directories:
+  # Base directory
+  base: ~/.beancountpilot
+  
+  # Data directory
+  data: ~/.beancountpilot/data
+  
+  # Configuration directory
+  config: ~/.beancountpilot/config
+  
+  # Logs directory
+  logs: ~/.beancountpilot/logs
+  
+  # Exports directory
+  exports: ~/.beancountpilot/exports
+
+# double-entry-generator configuration
+deg:
+  # DEG executable path
+  executable: double-entry-generator
+  
+  # Default configuration directory
+  config_dir: ~/.beancountpilot/config/deg
+  
+  # Timeout (seconds)
+  timeout: 60
+
+# Security configuration
+security:
+  # Encrypt API keys
+  encrypt_api_keys: true
+  
+  # Mask sensitive data
+  mask_sensitive_data: true
+  
+  # Mask in logs
+  mask_in_logs: true
