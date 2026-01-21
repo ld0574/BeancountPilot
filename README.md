@@ -29,6 +29,12 @@ BeancountPilot/
 │   ├── db/                # Database layer
 │   └── utils/             # Utility functions
 ├── frontend/              # Streamlit frontend
+│   ├── components/        # UI components
+│   ├── locales/           # i18n language files
+│   ├── pages/             # Page modules
+│   ├── app.py             # Main app entry
+│   ├── config.py          # Frontend config
+│   └── i18n.py            # Internationalization
 ├── config/                # Configuration files
 ├── tests/                 # Tests
 └── docs/                  # Documentation

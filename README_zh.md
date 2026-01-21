@@ -29,6 +29,12 @@ BeancountPilot/
 │   ├── db/                # 数据库层
 │   └── utils/             # 工具函数
 ├── frontend/              # Streamlit 前端
+│   ├── components/        # UI 组件
+│   ├── locales/           # i18n 语言文件
+│   ├── pages/             # 页面模块
+│   ├── app.py             # 主应用入口
+│   ├── config.py          # 前端配置
+│   └── i18n.py            # 国际化支持
 ├── config/                # 配置文件
 ├── tests/                 # 测试
 └── docs/                  # 文档
