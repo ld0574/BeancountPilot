@@ -162,7 +162,7 @@ This project is licensed under Apache-2.0 License - see [LICENSE](LICENSE) file 
 ## 🙏 Acknowledgments
 
 - [Beancount](https://beancount.github.io/) - Double-entry bookkeeping system
-- [double-entry-generator](https://github.com/debrouwere/double-entry-generator) - Transaction conversion tool
+- [double-entry-generator](https://github.com/deb-sig/double-entry-generator) - Rule-based double-entry bookkeeping importer
 - [Streamlit](https://streamlit.io/) - Web application framework
 - [FastAPI](https://fastapi.tiangolo.com/) - Web framework
 

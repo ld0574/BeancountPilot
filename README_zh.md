@@ -162,7 +162,7 @@ Expenses:Transport:Taxi
 ## 🙏 致谢
 
 - [Beancount](https://beancount.github.io/) - 复式记账系统
-- [double-entry-generator](https://github.com/debrouwere/double-entry-generator) - 交易转换工具
+- [double-entry-generator](https://github.com/deb-sig/double-entry-generator) - 基于规则的复式记账导入器
 - [Streamlit](https://streamlit.io/) - Web 应用框架
 - [FastAPI](https://fastapi.tiangolo.com/) - Web 框架
 
