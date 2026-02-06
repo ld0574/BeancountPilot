@@ -37,6 +37,8 @@ BeancountPilot/
 │   └── i18n.py            # Internationalization
 ├── config/                # Configuration files
 ├── tests/                 # Tests
+│   ├── unit/              # Unit tests
+│   └── integration/       # Integration tests
 └── docs/                  # Documentation
 ```
 
@@ -62,6 +64,12 @@ cd BeancountPilot
 
 ```bash
 pip install -r requirements.txt
+```
+
+For development, install additional dependencies:
+
+```bash
+pip install -r requirements-dev.txt
 ```
 
 3. Initialize database
@@ -149,6 +157,59 @@ Assets:Bank:WeChat
 Expenses:Food:Dining
 Expenses:Transport:Taxi
 ...
+```
+
+## 🧪 Testing
+
+### Running Tests
+
+Run all tests:
+
+```bash
+pytest
+```
+
+Run only unit tests:
+
+```bash
+pytest tests/unit/
+```
+
+Run only integration tests:
+
+```bash
+pytest tests/integration/
+```
+
+Run tests with coverage report:
+
+```bash
+pytest --cov=src --cov-report=html
+```
+
+### Test Coverage
+
+The project has comprehensive test coverage:
+
+- **Unit Tests**: 70+ tests covering all core modules
+- **Integration Tests**: 8+ tests for API endpoints
+- **Total Coverage**: 80+ tests across database, AI, core business logic, API, and utilities
+
+### Test Structure
+
+```
+tests/
+├── unit/                      # Unit tests
+│   ├── test_db_models.py       # Database model tests
+│   ├── test_db_repositories.py  # Repository layer tests
+│   ├── test_ai_base.py         # AI provider base tests
+│   ├── test_ai_prompt.py       # Prompt building/parsing tests
+│   ├── test_ai_factory.py      # Provider factory tests
+│   ├── test_core_rule_engine.py # Rule engine tests
+│   ├── test_utils_config.py    # Configuration utility tests
+│   └── test_api_schemas.py    # API schema tests
+└── integration/
+    └── test_api_integration.py  # API integration tests
 ```
 
 ## 🤝 Contributing

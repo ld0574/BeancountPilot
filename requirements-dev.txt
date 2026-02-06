@@ -1,0 +1,20 @@
+# Development dependencies for BeancountPilot
+
+# Testing framework
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+
+# Code quality tools
+flake8>=6.0.0
+black>=23.0.0
+isort>=5.12.0
+mypy>=1.5.0
+
+# Type stubs
+types-PyYAML>=6.0.12
+types-requests>=2.31.0
+
+# Documentation
+sphinx>=7.1.0
+sphinx-rtd-theme>=1.3.0

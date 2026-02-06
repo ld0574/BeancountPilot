@@ -1,23 +1,23 @@
-# 数据库配置文件
+# Database configuration file
 
-# 数据库类型
+# Database type
 database_type: sqlite
 
-# SQLite 配置
+# SQLite configuration
 sqlite:
-  # 数据库文件路径（支持环境变量）
+  # Database file path (supports environment variables)
   path: ${BEANCOUNTPILOT_DB_PATH:-~/.beancountpilot/data/beancountpilot.db}
   
-  # 是否启用 WAL 模式（提高并发性能）
+  # Enable WAL mode (improves concurrent performance)
   enable_wal: true
   
-  # 连接池配置
+  # Connection pool configuration
   pool_size: 5
   max_overflow: 10
   pool_timeout: 30
   pool_recycle: 3600
 
-# PostgreSQL 配置（可选，用于未来扩展）
+# PostgreSQL configuration (optional, for future expansion)
 postgresql:
   host: ${POSTGRES_HOST:-localhost}
   port: ${POSTGRES_PORT:-5432}
@@ -29,10 +29,10 @@ postgresql:
   pool_timeout: 30
   pool_recycle: 3600
 
-# 数据迁移配置
+# Database migration configuration
 migration:
-  # 是否自动执行迁移
+  # Auto execute migrations
   auto_migrate: true
   
-  # 迁移脚本目录
+  # Migration scripts directory
   migrations_dir: migrations

@@ -37,6 +37,8 @@ BeancountPilot/
 │   └── i18n.py            # 国际化支持
 ├── config/                # 配置文件
 ├── tests/                 # 测试
+│   ├── unit/              # 单元测试
+│   └── integration/       # 集成测试
 └── docs/                  # 文档
 ```
 
@@ -62,6 +64,12 @@ cd BeancountPilot
 
 ```bash
 pip install -r requirements.txt
+```
+
+开发环境需要额外安装依赖：
+
+```bash
+pip install -r requirements-dev.txt
 ```
 
 3. 初始化数据库
@@ -149,6 +157,59 @@ Assets:Bank:WeChat
 Expenses:Food:Dining
 Expenses:Transport:Taxi
 ...
+```
+
+## 🧪 测试
+
+### 运行测试
+
+运行所有测试：
+
+```bash
+pytest
+```
+
+仅运行单元测试：
+
+```bash
+pytest tests/unit/
+```
+
+仅运行集成测试：
+
+```bash
+pytest tests/integration/
+```
+
+运行测试并生成覆盖率报告：
+
+```bash
+pytest --cov=src --cov-report=html
+```
+
+### 测试覆盖率
+
+项目具有全面的测试覆盖：
+
+- **单元测试**：70+ 个测试，覆盖所有核心模块
+- **集成测试**：8+ 个测试，用于 API 端点
+- **总覆盖率**：80+ 个测试，涵盖数据库、AI、核心业务逻辑、API 和工具函数
+
+### 测试结构
+
+```
+tests/
+├── unit/                      # 单元测试
+│   ├── test_db_models.py       # 数据库模型测试
+│   ├── test_db_repositories.py  # 仓库层测试
+│   ├── test_ai_base.py         # AI 提供者基类测试
+│   ├── test_ai_prompt.py       # 提示词构建/解析测试
+│   ├── test_ai_factory.py      # 提供者工厂测试
+│   ├── test_core_rule_engine.py # 规则引擎测试
+│   ├── test_utils_config.py    # 配置工具测试
+│   └── test_api_schemas.py    # API 模式测试
+└── integration/
+    └── test_api_integration.py  # API 集成测试
 ```
 
 ## 🤝 贡献
