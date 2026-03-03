@@ -17,6 +17,10 @@ from src.utils.config import (
     AI_CONFIG_FILE,
     DATABASE_CONFIG_FILE,
     APPLICATION_CONFIG_FILE,
+    PROVIDERS_CONFIG_DIR,
+    load_providers_config,
+    save_provider_config,
+    _get_default_config,
 )
 
 
@@ -229,3 +233,26 @@ class TestGetDefaultConfig:
 
         assert "application" in config
         assert "frontend" in config["application"]
+
+
+class TestProvidersConfig:
+    """Test providers configuration helpers"""
+
+    def test_load_providers_config_empty(self, monkeypatch):
+        """Test loading providers config when directory missing"""
+        monkeypatch.setattr("src.utils.config.PROVIDERS_CONFIG_DIR", Path("/nonexistent"))
+        config = load_providers_config()
+        assert config == {}
+
+    def test_save_provider_config(self, monkeypatch, tmp_path):
+        """Test saving provider config"""
+        providers_dir = tmp_path / "providers"
+        monkeypatch.setattr("src.utils.config.PROVIDERS_CONFIG_DIR", providers_dir)
+        monkeypatch.setattr("src.utils.config.ensure_providers_dir", lambda: providers_dir.mkdir(parents=True, exist_ok=True))
+
+        save_provider_config("alipay", {"mapping": {"default": "Expenses:Misc"}})
+
+        saved_file = providers_dir / "alipay.yaml"
+        assert saved_file.exists()
+        loaded = load_yaml_config(saved_file)
+        assert loaded["mapping"]["default"] == "Expenses:Misc"

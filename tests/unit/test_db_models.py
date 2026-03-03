@@ -7,7 +7,7 @@ from datetime import datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from src.db.models import Base, Transaction, Classification, Feedback, Rule, UserConfig
+from src.db.models import Base, Transaction, Classification, Feedback, Rule, UserConfig, User, Knowledge
 
 
 @pytest.fixture
@@ -241,3 +241,38 @@ class TestUserConfig:
         in_memory_db.refresh(config)
 
         assert config.value == "openai"
+
+
+class TestUser:
+    """Test User model"""
+
+    def test_create_user(self, in_memory_db):
+        """Test creating user"""
+        user = User(
+            id="user_001",
+            username="tester",
+        )
+        in_memory_db.add(user)
+        in_memory_db.commit()
+        in_memory_db.refresh(user)
+
+        assert user.username == "tester"
+
+
+class TestKnowledge:
+    """Test Knowledge model"""
+
+    def test_create_knowledge(self, in_memory_db):
+        """Test creating knowledge record"""
+        record = Knowledge(
+            id="kn_001",
+            key="peer:Starbucks",
+            value="Expenses:Food:Dining",
+            source="feedback",
+        )
+        in_memory_db.add(record)
+        in_memory_db.commit()
+        in_memory_db.refresh(record)
+
+        assert record.key == "peer:Starbucks"
+        assert record.value == "Expenses:Food:Dining"

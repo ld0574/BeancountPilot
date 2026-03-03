@@ -110,3 +110,26 @@ class UserConfig(Base):
     key = Column(String, primary_key=True)
     value = Column(Text, nullable=False)
     updated_at = Column(String, default=lambda: datetime.utcnow().isoformat())
+
+
+class User(Base):
+    """User table"""
+
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True)
+    username = Column(String, nullable=False, unique=True, index=True)
+    created_at = Column(String, default=lambda: datetime.utcnow().isoformat())
+
+
+class Knowledge(Base):
+    """Knowledge base table"""
+
+    __tablename__ = "knowledge"
+
+    id = Column(String, primary_key=True)
+    key = Column(String, nullable=False, index=True)
+    value = Column(Text, nullable=False)
+    source = Column(String, default="feedback")
+    created_at = Column(String, default=lambda: datetime.utcnow().isoformat())
+    updated_at = Column(String, default=lambda: datetime.utcnow().isoformat())

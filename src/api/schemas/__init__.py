@@ -11,6 +11,14 @@ from src.api.schemas.transaction import (
     FeedbackResponse,
     GenerateRequest,
     GenerateResponse,
+    RuleCreate,
+    RuleUpdate,
+    RuleResponse,
+    UserCreate,
+    UserResponse,
+    KnowledgeCreate,
+    KnowledgeUpdate,
+    KnowledgeResponse,
 )
 
 __all__ = [

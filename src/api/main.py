@@ -5,7 +5,7 @@ FastAPI main application
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.routes import upload, classify, feedback, generate
+from src.api.routes import upload, classify, feedback, generate, rules, users, knowledge, ws
 
 # Create FastAPI application
 app = FastAPI(
@@ -28,6 +28,10 @@ app.include_router(upload.router, prefix="/api", tags=["upload"])
 app.include_router(classify.router, prefix="/api", tags=["classify"])
 app.include_router(feedback.router, prefix="/api", tags=["feedback"])
 app.include_router(generate.router, prefix="/api", tags=["generate"])
+app.include_router(rules.router, prefix="/api", tags=["rules"])
+app.include_router(users.router, prefix="/api", tags=["users"])
+app.include_router(knowledge.router, prefix="/api", tags=["knowledge"])
+app.include_router(ws.router, tags=["ws"])
 
 
 @app.get("/")

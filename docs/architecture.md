@@ -793,21 +793,21 @@ services:
 
 ### Phase 2: 核心功能
 
-- [ ] 规则引擎实现
-- [ ] 反馈学习模块
-- [ ] 多 provider 支持
-- [ ] 配置管理
+- [x] 规则引擎实现
+- [x] 反馈学习模块
+- [x] 多 provider 支持
+- [x] 配置管理
 
 ### Phase 3: 增强功能
 
 - [ ] 批量处理
-- [ ] 导出规则到 double-entry-generator
+- [x] 导出规则到 double-entry-generator
 - [ ] 数据可视化（Streamlit 图表）
-- [ ] Streamlit 多页面架构
+- [x] Streamlit 多页面架构
 
 ### Phase 4: 高级功能
 
-- [ ] Streamlit 自定义组件
+- [x] Streamlit 自定义组件
 - [ ] 云同步（可选）
 - [ ] 移动端响应式设计
 - [ ] 插件系统

@@ -4,11 +4,13 @@ Creates database tables and initializes default data
 """
 
 import sys
+import json
 from pathlib import Path
 
 from src.db.models import Base
 from src.db.session import init_db, get_session
 from src.db.repositories import UserConfigRepository
+from src.utils.config import load_config, _get_default_config
 
 
 def init_database():
@@ -72,6 +74,12 @@ Income:Other"""
     # Set default AI provider if not exists
     if UserConfigRepository.get(db, "ai_default_provider") is None:
         UserConfigRepository.set(db, "ai_default_provider", "deepseek")
+
+    # Set default AI config snapshot if not exists
+    if UserConfigRepository.get(db, "ai_config") is None:
+        config = load_config()
+        ai_config = config.get("ai") or _get_default_config().get("ai", {})
+        UserConfigRepository.set(db, "ai_config", json.dumps(ai_config, ensure_ascii=False))
 
     # Set default language if not exists
     if UserConfigRepository.get(db, "language") is None:

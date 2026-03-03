@@ -10,7 +10,15 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 
-from src.db.models import Transaction, Classification, Feedback, Rule, UserConfig
+from src.db.models import (
+    Transaction,
+    Classification,
+    Feedback,
+    Rule,
+    UserConfig,
+    User,
+    Knowledge,
+)
 
 
 class TransactionRepository:
@@ -357,6 +365,101 @@ class UserConfigRepository:
         config = db.query(UserConfig).filter(UserConfig.key == key).first()
         if config:
             db.delete(config)
+            db.commit()
+            return True
+        return False
+
+
+class UserRepository:
+    """User data access"""
+
+    @staticmethod
+    def create(db: Session, username: str) -> User:
+        """Create user"""
+        user = User(
+            id=str(uuid.uuid4()),
+            username=username,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user
+
+    @staticmethod
+    def get_by_id(db: Session, user_id: str) -> Optional[User]:
+        """Get user by ID"""
+        return db.query(User).filter(User.id == user_id).first()
+
+    @staticmethod
+    def get_by_username(db: Session, username: str) -> Optional[User]:
+        """Get user by username"""
+        return db.query(User).filter(User.username == username).first()
+
+    @staticmethod
+    def list_all(db: Session, skip: int = 0, limit: int = 100) -> List[User]:
+        """List users"""
+        return db.query(User).offset(skip).limit(limit).all()
+
+    @staticmethod
+    def delete(db: Session, user_id: str) -> bool:
+        """Delete user"""
+        user = UserRepository.get_by_id(db, user_id)
+        if user:
+            db.delete(user)
+            db.commit()
+            return True
+        return False
+
+
+class KnowledgeRepository:
+    """Knowledge base data access"""
+
+    @staticmethod
+    def create(db: Session, key: str, value: str, source: str = "feedback") -> Knowledge:
+        """Create knowledge record"""
+        record = Knowledge(
+            id=str(uuid.uuid4()),
+            key=key,
+            value=value,
+            source=source,
+        )
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+        return record
+
+    @staticmethod
+    def get_by_id(db: Session, knowledge_id: str) -> Optional[Knowledge]:
+        """Get knowledge by ID"""
+        return db.query(Knowledge).filter(Knowledge.id == knowledge_id).first()
+
+    @staticmethod
+    def list_all(db: Session, skip: int = 0, limit: int = 100) -> List[Knowledge]:
+        """List knowledge records"""
+        return db.query(Knowledge).offset(skip).limit(limit).all()
+
+    @staticmethod
+    def search_by_key(db: Session, key: str) -> List[Knowledge]:
+        """Search knowledge by key"""
+        return db.query(Knowledge).filter(Knowledge.key.contains(key)).all()
+
+    @staticmethod
+    def update_value(db: Session, knowledge_id: str, value: str) -> Optional[Knowledge]:
+        """Update knowledge value"""
+        record = KnowledgeRepository.get_by_id(db, knowledge_id)
+        if record:
+            record.value = value
+            record.updated_at = datetime.utcnow().isoformat()
+            db.commit()
+            db.refresh(record)
+        return record
+
+    @staticmethod
+    def delete(db: Session, knowledge_id: str) -> bool:
+        """Delete knowledge record"""
+        record = KnowledgeRepository.get_by_id(db, knowledge_id)
+        if record:
+            db.delete(record)
             db.commit()
             return True
         return False

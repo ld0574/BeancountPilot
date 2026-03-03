@@ -1,0 +1,4 @@
+mapping:
+  default: Expenses:Misc
+accounts:
+  alipay: Assets:Bank:Alipay

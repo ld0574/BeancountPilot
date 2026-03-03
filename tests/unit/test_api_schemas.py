@@ -15,6 +15,14 @@ from src.api.schemas.transaction import (
     FeedbackResponse,
     GenerateRequest,
     GenerateResponse,
+    RuleCreate,
+    RuleUpdate,
+    RuleResponse,
+    UserCreate,
+    UserResponse,
+    KnowledgeCreate,
+    KnowledgeUpdate,
+    KnowledgeResponse,
 )
 
 
@@ -284,3 +292,113 @@ class TestGenerateSchemas:
 
         assert response.success is False
         assert response.message == "Generation failed"
+
+
+class TestRuleSchemas:
+    """Test rule-related schemas"""
+
+    def test_rule_create_valid(self):
+        """Test valid RuleCreate schema"""
+        data = {
+            "name": "Coffee rule",
+            "conditions": {"peer": ["Starbucks"]},
+            "account": "Expenses:Food:Dining",
+            "confidence": 0.9,
+            "source": "user",
+        }
+
+        rule = RuleCreate(**data)
+
+        assert rule.name == "Coffee rule"
+        assert rule.confidence == 0.9
+        assert rule.source == "user"
+
+    def test_rule_create_invalid_confidence(self):
+        """Test RuleCreate with invalid confidence"""
+        data = {
+            "name": "Bad rule",
+            "conditions": {"peer": ["Starbucks"]},
+            "account": "Expenses:Food:Dining",
+            "confidence": 1.5,
+        }
+
+        with pytest.raises(ValidationError):
+            RuleCreate(**data)
+
+    def test_rule_update_valid(self):
+        """Test valid RuleUpdate schema"""
+        data = {
+            "name": "Updated rule",
+            "account": "Expenses:Food:Groceries",
+        }
+
+        rule = RuleUpdate(**data)
+
+        assert rule.name == "Updated rule"
+        assert rule.account == "Expenses:Food:Groceries"
+
+    def test_rule_response_valid(self):
+        """Test valid RuleResponse schema"""
+        data = {
+            "id": "rule_001",
+            "name": "Coffee rule",
+            "conditions": {"peer": ["Starbucks"]},
+            "account": "Expenses:Food:Dining",
+            "confidence": 1.0,
+            "source": "user",
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-01-02T00:00:00Z",
+        }
+
+        rule = RuleResponse(**data)
+
+        assert rule.id == "rule_001"
+        assert rule.account == "Expenses:Food:Dining"
+
+
+class TestUserSchemas:
+    """Test user-related schemas"""
+
+    def test_user_create_valid(self):
+        """Test valid UserCreate schema"""
+        user = UserCreate(username="tester")
+        assert user.username == "tester"
+
+    def test_user_response_valid(self):
+        """Test valid UserResponse schema"""
+        data = {
+            "id": "user_001",
+            "username": "tester",
+            "created_at": "2024-01-01T00:00:00Z",
+        }
+        user = UserResponse(**data)
+        assert user.id == "user_001"
+        assert user.username == "tester"
+
+
+class TestKnowledgeSchemas:
+    """Test knowledge-related schemas"""
+
+    def test_knowledge_create_valid(self):
+        """Test valid KnowledgeCreate schema"""
+        record = KnowledgeCreate(key="peer:Starbucks", value="Expenses:Food:Dining")
+        assert record.key == "peer:Starbucks"
+
+    def test_knowledge_update_valid(self):
+        """Test valid KnowledgeUpdate schema"""
+        record = KnowledgeUpdate(value="Expenses:Food:Groceries")
+        assert record.value == "Expenses:Food:Groceries"
+
+    def test_knowledge_response_valid(self):
+        """Test valid KnowledgeResponse schema"""
+        data = {
+            "id": "kn_001",
+            "key": "peer:Starbucks",
+            "value": "Expenses:Food:Dining",
+            "source": "feedback",
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-01-02T00:00:00Z",
+        }
+        record = KnowledgeResponse(**data)
+        assert record.id == "kn_001"
+        assert record.key == "peer:Starbucks"

@@ -109,3 +109,77 @@ class GenerateResponse(BaseModel):
     success: bool
     beancount_file: str
     message: str
+
+
+# Rule-related models
+class RuleCreate(BaseModel):
+    """Rule creation request model"""
+
+    name: str
+    conditions: Dict[str, Any]
+    account: str
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    source: str = Field(default="user", description="user or auto")
+
+
+class RuleUpdate(BaseModel):
+    """Rule update request model"""
+
+    name: Optional[str] = None
+    conditions: Optional[Dict[str, Any]] = None
+    account: Optional[str] = None
+
+
+class RuleResponse(BaseModel):
+    """Rule response model"""
+
+    id: str
+    name: str
+    conditions: Dict[str, Any]
+    account: str
+    confidence: float
+    source: str
+    created_at: str
+    updated_at: Optional[str] = None
+
+
+class UserCreate(BaseModel):
+    """User creation request model"""
+
+    username: str
+
+
+class UserResponse(BaseModel):
+    """User response model"""
+
+    id: str
+    username: str
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+
+class KnowledgeCreate(BaseModel):
+    """Knowledge creation request model"""
+
+    key: str
+    value: str
+    source: str = Field(default="feedback")
+
+
+class KnowledgeUpdate(BaseModel):
+    """Knowledge update request model"""
+
+    value: str
+
+
+class KnowledgeResponse(BaseModel):
+    """Knowledge response model"""
+
+    id: str
+    key: str
+    value: str
+    source: str
+    created_at: str
+    updated_at: str

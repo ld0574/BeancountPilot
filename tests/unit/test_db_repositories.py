@@ -7,13 +7,15 @@ import json
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from src.db.models import Base, Transaction, Classification, Feedback, Rule, UserConfig
+from src.db.models import Base, Transaction, Classification, Feedback, Rule, UserConfig, User, Knowledge
 from src.db.repositories import (
     TransactionRepository,
     ClassificationRepository,
     FeedbackRepository,
     RuleRepository,
     UserConfigRepository,
+    UserRepository,
+    KnowledgeRepository,
 )
 
 
@@ -367,3 +369,47 @@ class TestUserConfigRepository:
         """Test getting non-existent configuration"""
         config = UserConfigRepository.get(in_memory_db, "nonexistent_key")
         assert config is None
+
+
+class TestUserRepository:
+    """Test UserRepository"""
+
+    def test_create_and_get_user(self, in_memory_db):
+        """Test creating and fetching user"""
+        user = UserRepository.create(in_memory_db, "tester")
+        found = UserRepository.get_by_id(in_memory_db, user.id)
+        assert found is not None
+        assert found.username == "tester"
+
+    def test_get_by_username(self, in_memory_db):
+        """Test get by username"""
+        UserRepository.create(in_memory_db, "tester2")
+        found = UserRepository.get_by_username(in_memory_db, "tester2")
+        assert found is not None
+        assert found.username == "tester2"
+
+
+class TestKnowledgeRepository:
+    """Test KnowledgeRepository"""
+
+    def test_create_and_update_knowledge(self, in_memory_db):
+        """Test creating and updating knowledge"""
+        record = KnowledgeRepository.create(
+            db=in_memory_db,
+            key="peer:Starbucks",
+            value="Expenses:Food:Dining",
+            source="feedback",
+        )
+        updated = KnowledgeRepository.update_value(in_memory_db, record.id, "Expenses:Food:Groceries")
+        assert updated is not None
+        assert updated.value == "Expenses:Food:Groceries"
+
+    def test_search_by_key(self, in_memory_db):
+        """Test searching knowledge by key"""
+        KnowledgeRepository.create(
+            db=in_memory_db,
+            key="peer:Starbucks",
+            value="Expenses:Food:Dining",
+        )
+        results = KnowledgeRepository.search_by_key(in_memory_db, "Starbucks")
+        assert len(results) == 1

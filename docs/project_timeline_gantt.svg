@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="580" viewBox="0 0 980 580">
+  <rect width="980" height="580" fill="#f7f8fb"/>
+  <rect x="20" y="20" width="940" height="540" rx="18" fill="#ffffff" stroke="#e6e9f0"/>
+
+  <text x="44" y="60" font-family="Helvetica, Arial, sans-serif" font-size="20" fill="#0f172a">BeancountPilot Project Timeline (Gantt)</text>
+  <text x="44" y="82" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#64748b">Start Date: 2026-02-09</text>
+
+  <line x1="200" y1="104" x2="760" y2="104" stroke="#e5e7eb"/>
+  <text x="200" y="96" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#475569">02-09</text>
+  <text x="280" y="96" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#475569">02-16</text>
+  <text x="360" y="96" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#475569">02-23</text>
+  <text x="440" y="96" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#475569">03-02</text>
+  <text x="520" y="96" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#475569">03-09</text>
+  <text x="600" y="96" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#475569">03-16</text>
+  <text x="680" y="96" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#475569">03-23</text>
+
+  <line x1="200" y1="108" x2="200" y2="436" stroke="#f1f5f9"/>
+  <line x1="280" y1="108" x2="280" y2="436" stroke="#f1f5f9"/>
+  <line x1="360" y1="108" x2="360" y2="436" stroke="#f1f5f9"/>
+  <line x1="440" y1="108" x2="440" y2="436" stroke="#f1f5f9"/>
+  <line x1="520" y1="108" x2="520" y2="436" stroke="#f1f5f9"/>
+  <line x1="600" y1="108" x2="600" y2="436" stroke="#f1f5f9"/>
+  <line x1="680" y1="108" x2="680" y2="436" stroke="#f1f5f9"/>
+  <line x1="760" y1="108" x2="760" y2="436" stroke="#f1f5f9"/>
+
+  <text x="44" y="148" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#0f172a">Requirement Analysis</text>
+  <rect x="200" y="132" width="80" height="20" rx="10" fill="#93c5fd"/>
+
+  <text x="44" y="192" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#0f172a">Design Phase</text>
+  <rect x="280" y="176" width="114.3" height="20" rx="10" fill="#86efac"/>
+
+  <text x="44" y="236" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#0f172a">Development Phase 1</text>
+  <rect x="394.3" y="220" width="148.6" height="20" rx="10" fill="#fdba74"/>
+
+  <text x="44" y="280" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#0f172a">Development Phase 2</text>
+  <rect x="542.9" y="264" width="137.1" height="20" rx="10" fill="#fda4af"/>
+
+  <text x="44" y="324" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#0f172a">Testing</text>
+  <rect x="680" y="308" width="45.7" height="20" rx="10" fill="#c4b5fd"/>
+
+  <text x="44" y="368" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#0f172a">Deployment and Documentation</text>
+  <rect x="725.7" y="352" width="34.3" height="20" rx="10" fill="#fde68a"/>
+
+  <text x="44" y="416" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#0f172a">Milestones</text>
+  <circle cx="280" cy="410" r="5" fill="#0f172a"/>
+  <text x="292" y="414" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#475569">M1</text>
+  <circle cx="382.9" cy="410" r="5" fill="#0f172a"/>
+  <text x="394.9" y="414" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#475569">M2</text>
+  <circle cx="542.9" cy="410" r="5" fill="#0f172a"/>
+  <text x="554.9" y="414" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#475569">M3</text>
+  <circle cx="680" cy="410" r="5" fill="#0f172a"/>
+  <text x="692" y="414" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#475569">M4</text>
+  <circle cx="725.7" cy="410" r="5" fill="#0f172a"/>
+  <text x="737.7" y="414" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#475569">M5</text>
+  <circle cx="760" cy="410" r="5" fill="#0f172a"/>
+  <text x="772" y="414" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#475569">M6</text>
+
+  <rect x="44" y="452" width="16" height="8" rx="4" fill="#93c5fd"/>
+  <text x="68" y="460" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#475569">Req. Analysis</text>
+  <rect x="180" y="452" width="16" height="8" rx="4" fill="#86efac"/>
+  <text x="204" y="460" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#475569">Design Phase</text>
+  <rect x="310" y="452" width="16" height="8" rx="4" fill="#fdba74"/>
+  <text x="334" y="460" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#475569">Dev P1</text>
+  <rect x="430" y="452" width="16" height="8" rx="4" fill="#fda4af"/>
+  <text x="454" y="460" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#475569">Dev P2</text>
+  <rect x="560" y="452" width="16" height="8" rx="4" fill="#c4b5fd"/>
+  <text x="584" y="460" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#475569">Testing</text>
+  <rect x="660" y="452" width="16" height="8" rx="4" fill="#fde68a"/>
+  <text x="684" y="460" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#475569">Deploy &amp; Docs</text>
+
+  <text x="44" y="500" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#94a3b8">Milestones: M1 Req Doc, M2 Design Spec, M3 Prototype, M4 Beta, M5 Test Report, M6 Go Live.</text>
+</svg>

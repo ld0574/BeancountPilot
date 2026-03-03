@@ -214,3 +214,90 @@ class TestGenerateAPI:
         # Note: This may fail if double-entry-generator is not installed
         # For now, just verify the endpoint exists
         assert response.status_code in [200, 500]
+
+
+class TestRulesAPI:
+    """Test rules API endpoints"""
+
+    def test_rules_crud(self, client):
+        """Test creating, listing, updating, and deleting rules"""
+        rule_data = {
+            "name": "Coffee rule",
+            "conditions": {"peer": ["Starbucks"]},
+            "account": "Expenses:Food:Dining",
+            "confidence": 0.9,
+            "source": "user",
+        }
+
+        create_response = client.post("/api/rules", json=rule_data)
+        assert create_response.status_code == 200
+        created_rule = create_response.json()
+        rule_id = created_rule["id"]
+
+        list_response = client.get("/api/rules")
+        assert list_response.status_code == 200
+        rules = list_response.json()
+        assert isinstance(rules, list)
+        assert any(rule["id"] == rule_id for rule in rules)
+
+        update_response = client.put(
+            f"/api/rules/{rule_id}",
+            json={"account": "Expenses:Food:Groceries"},
+        )
+        assert update_response.status_code == 200
+        updated_rule = update_response.json()
+        assert updated_rule["account"] == "Expenses:Food:Groceries"
+
+        delete_response = client.delete(f"/api/rules/{rule_id}")
+        assert delete_response.status_code == 200
+
+
+class TestUserAndKnowledgeAPI:
+    """Test user and knowledge API endpoints"""
+
+    def test_user_crud(self, client):
+        """Test creating and listing users"""
+        create_response = client.post("/api/users", json={"username": "tester"})
+        assert create_response.status_code == 200
+        user = create_response.json()
+
+        list_response = client.get("/api/users")
+        assert list_response.status_code == 200
+        users = list_response.json()
+        assert any(u["id"] == user["id"] for u in users)
+
+    def test_knowledge_crud(self, client):
+        """Test creating, listing, updating, and deleting knowledge"""
+        create_response = client.post(
+            "/api/knowledge",
+            json={"key": "peer:Starbucks", "value": "Expenses:Food:Dining"},
+        )
+        assert create_response.status_code == 200
+        record = create_response.json()
+
+        list_response = client.get("/api/knowledge")
+        assert list_response.status_code == 200
+        records = list_response.json()
+        assert any(r["id"] == record["id"] for r in records)
+
+        update_response = client.put(
+            f"/api/knowledge/{record['id']}",
+            json={"value": "Expenses:Food:Groceries"},
+        )
+        assert update_response.status_code == 200
+
+        delete_response = client.delete(f"/api/knowledge/{record['id']}")
+        assert delete_response.status_code == 200
+
+
+class TestWebSocket:
+    """Test WebSocket endpoint"""
+
+    def test_classify_ws(self, client):
+        """Test websocket handshake and basic message"""
+        with client.websocket_connect("/ws/classify") as websocket:
+            message = websocket.receive_json()
+            assert message["status"] == "connected"
+            websocket.send_json({"event": "start"})
+            response = websocket.receive_json()
+            assert response["status"] == "started"

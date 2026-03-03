@@ -9,6 +9,8 @@ from src.db.models import (
     Feedback,
     Rule,
     UserConfig,
+    User,
+    Knowledge,
 )
 
 __all__ = [
