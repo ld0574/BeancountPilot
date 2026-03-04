@@ -141,6 +141,18 @@ double-entry-generator translate -p alipay -t beancount alipay_records.csv
 ### 3. AI 分类
 
 系统会自动使用 AI 对交易进行分类，你也可以手动调整分类结果。
+规则流程已改为 DEG 优先：先匹配已有 DEG 规则，unknown 再交给 AI，高置信度 AI 结果可自动沉淀为规则。
+Settings 中的 Rule Management 现用于管理 DEG 风格规则（通用规则 + Provider 专属规则）。规则字段说明参考：
+https://deb-sig.github.io/double-entry-generator/configuration/rules.html
+
+另外，`Settings -> Rule Management` 已支持导入/导出完整 DEG YAML：
+
+- 可直接导入 `import/alipay.yaml` 这种 Provider 全量配置。
+- 可导出 Provider YAML，并按下面方式执行 DEG：
+
+```bash
+double-entry-generator translate --config ./alipay.yaml --provider alipay --output ./alipay.beancount alipay_records.csv
+```
 
 ### 4. 生成 Beancount 文件
 

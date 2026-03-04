@@ -23,6 +23,9 @@ Transaction to classify:
 - Amount: {amount}
 
 Please analyze the above transaction, select the most appropriate account from the chart of accounts, and provide a confidence score (0-1).
+Rules:
+- You must choose an account exactly from "User chart of accounts". Do not invent accounts.
+- Keep reasoning concise (one short sentence).
 
 Output format (JSON):
 {{
@@ -47,6 +50,9 @@ List of transactions to classify:
 {transactions}
 
 Please analyze the above transactions, for each transaction select the most appropriate account from the chart of accounts, and provide a confidence score (0-1).
+Rules:
+- You must choose each account exactly from "User chart of accounts". Do not invent accounts.
+- Keep reasoning concise (one short sentence).
 
 Output format (JSON array):
 [

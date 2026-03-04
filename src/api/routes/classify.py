@@ -51,7 +51,10 @@ async def classify_transactions(
         classifier = Classifier(db, resolved_provider)
 
         # Execute classification
-        results = await classifier.classify_transactions(request.transactions)
+        results = await classifier.classify_transactions(
+            request.transactions,
+            chart_of_accounts=request.chart_of_accounts,
+        )
 
         # Save classification results
         classification_results = []

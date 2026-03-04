@@ -68,14 +68,14 @@ class TransactionTable:
             return st.data_editor(
                 df,
                 num_rows="dynamic",
-                use_container_width=True,
+                width="stretch",
                 column_config=column_config,
                 hide_index=True,
             )
         else:
             st.dataframe(
                 df,
-                use_container_width=True,
+                width="stretch",
                 column_config=column_config,
                 hide_index=True,
             )
@@ -120,10 +120,23 @@ class TransactionTable:
         chart_of_accounts = st.session_state.get("chart_of_accounts", "")
 
         accounts = []
+        seen = set()
         for line in chart_of_accounts.split("\n"):
             line = line.strip()
-            if line and not line.startswith("#"):
-                accounts.append(line)
+            if not line or line.startswith("#"):
+                continue
+            if line in seen:
+                continue
+            seen.add(line)
+            accounts.append(line)
+
+        # Ensure rule/AI output accounts can always be rendered in SelectboxColumn.
+        for c in self.classifications or []:
+            account = str(c.get("account", "")).strip()
+            if not account or account in seen:
+                continue
+            seen.add(account)
+            accounts.append(account)
 
         return accounts if accounts else ["Expenses:Misc"]
 

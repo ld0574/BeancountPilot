@@ -27,23 +27,38 @@ st.set_page_config(
 )
 
 # Initialize default session state
-def _load_default_provider() -> str:
-    """Load active provider from backend config."""
+def _load_ai_runtime_state() -> tuple[str, list[dict]]:
+    """Load active AI profile id and profile list from backend config."""
     try:
         timeout = min(get_api_timeout(), 3)
         response = requests.get(get_api_url("/ai/config"), timeout=timeout)
         if response.status_code == 200:
             data = response.json()
-            default_provider = data.get("default_profile_id") or data.get("default_provider")
+            profiles = data.get("profiles") if isinstance(data.get("profiles"), list) else []
+            default_provider = data.get("default_profile_id") or data.get("default_provider") or ""
+            if (not default_provider) and profiles:
+                default_provider = str(profiles[0].get("id", "")).strip()
             if isinstance(default_provider, str) and default_provider:
-                return default_provider
+                return default_provider, profiles
     except Exception:
         pass
-    return "deepseek"
+    return "deepseek", []
 
 
+default_provider_id, loaded_ai_profiles = _load_ai_runtime_state()
 if "provider" not in st.session_state:
-    st.session_state.provider = _load_default_provider()
+    st.session_state.provider = default_provider_id
+if "ai_profiles" not in st.session_state:
+    st.session_state.ai_profiles = loaded_ai_profiles
+
+if loaded_ai_profiles:
+    valid_profile_ids = {
+        str(profile.get("id", "")).strip()
+        for profile in loaded_ai_profiles
+        if str(profile.get("id", "")).strip()
+    }
+    if str(st.session_state.get("provider", "")).strip() not in valid_profile_ids:
+        st.session_state.provider = default_provider_id
 if "data_source" not in st.session_state:
     st.session_state.data_source = "alipay"
 if "api_key" not in st.session_state:
@@ -468,7 +483,7 @@ with st.sidebar:
     for page_key, page_label in navigation_items:
         if st.button(
             page_label,
-            use_container_width=True,
+            width="stretch",
             type="primary" if st.session_state.current_page == page_key else "secondary",
             key=f"nav_{page_key}",
         ):

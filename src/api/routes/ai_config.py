@@ -187,6 +187,18 @@ def _resolve_default_profile_id(profiles: List[Dict[str, Any]], ref: str) -> str
     return profiles[0]["id"]
 
 
+def _is_valid_profile_ref(profiles: List[Dict[str, Any]], ref: str) -> bool:
+    """Whether ref can map to a profile id or provider type."""
+    ref = str(ref or "").strip()
+    if not ref:
+        return False
+    if any(p["id"] == ref for p in profiles):
+        return True
+    if ref in PROVIDER_TYPES and any(p["provider"] == ref for p in profiles):
+        return True
+    return False
+
+
 @router.get("/ai/config")
 async def get_ai_config(
     db: Session = Depends(get_db),
@@ -205,11 +217,14 @@ async def get_ai_config(
 
     # Backward compatibility key: could contain old provider type or profile id.
     stored_default = UserConfigRepository.get(db, "ai_default_provider")
-    if stored_default:
+    if stored_default and _is_valid_profile_ref(config["profiles"], stored_default):
         config["default_profile_id"] = _resolve_default_profile_id(
             config["profiles"],
             stored_default,
         )
+    elif stored_default:
+        # Self-heal stale compatibility key and keep profile-based default as source of truth.
+        UserConfigRepository.set(db, "ai_default_provider", config["default_profile_id"])
 
     return config
 

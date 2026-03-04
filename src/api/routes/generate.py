@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from src.db.session import get_db
 from src.core.deg_integration import DoubleEntryGenerator
+from src.core.rule_engine import RuleEngine
 from src.core.deg_catalog import (
     get_default_provider_aliases,
     get_official_provider_catalog,
@@ -182,11 +183,14 @@ async def generate_beancount(
     try:
         # Create DEG integrator
         deg = _create_deg(db)
+        rule_engine = RuleEngine(db)
+        deg_config_yaml = rule_engine.export_deg_yaml(provider=request.provider)
 
         # Generate Beancount file
         result = deg.generate_beancount_from_transactions(
             transactions=request.transactions,
             provider=request.provider,
+            config_content=deg_config_yaml,
         )
 
         return GenerateResponse(

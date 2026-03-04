@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from frontend.i18n import init_i18n, t, label, get_current_language
 from frontend.config import get_api_url, get_api_timeout
+from src.utils.csv_table_parser import parse_csv_rows
 
 FALLBACK_PROVIDER_CATALOG = [
     {"code": "alipay", "i18n_key": "deg_provider_alipay", "name_en": "Alipay", "name_zh": "支付宝"},
@@ -89,7 +90,7 @@ def _load_provider_catalog() -> list[dict]:
     return FALLBACK_PROVIDER_CATALOG
 
 
-def _read_table_with_fallback(uploaded_file) -> pd.DataFrame:
+def _read_table_with_fallback(uploaded_file, provider: str = "") -> pd.DataFrame:
     """
     Read uploaded CSV/XLS/XLSX with encoding fallback for CSV.
     """
@@ -99,14 +100,10 @@ def _read_table_with_fallback(uploaded_file) -> pd.DataFrame:
     if name.endswith(".xls") or name.endswith(".xlsx"):
         return pd.read_excel(io.BytesIO(raw))
 
-    for encoding in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
-        try:
-            text = raw.decode(encoding)
-            return pd.read_csv(io.StringIO(text))
-        except UnicodeDecodeError:
-            continue
-
-    raise ValueError("Unsupported file encoding. Please export as UTF-8/GBK CSV, or use XLS/XLSX.")
+    rows = parse_csv_rows(raw, provider=provider)
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
 
 
 def render():
@@ -212,10 +209,10 @@ def render():
 
         # Read and preview CSV
         try:
-            df = _read_table_with_fallback(uploaded_file)
+            df = _read_table_with_fallback(uploaded_file, provider=provider or provider_selected)
 
             st.subheader(label("file_preview"))
-            st.dataframe(df.head(10), use_container_width=True)
+            st.dataframe(df.head(10), width="stretch")
 
             # Display statistics
             st.subheader(label("statistics"))
@@ -241,8 +238,9 @@ def render():
 
             # Confirm import button
             st.markdown("---")
+            st.caption(t("upload_import_behavior_note"))
 
-            if st.button(label("import_data"), type="primary", use_container_width=True):
+            if st.button(label("import_data"), type="primary", width="stretch"):
                 with st.spinner(label("importing_data")):
                     # Call API to import data
                     try:
@@ -264,9 +262,11 @@ def render():
                             # Save to session state
                             st.session_state.transactions = transactions
                             st.session_state.data_source = provider or provider_selected
+                            st.session_state.pop("classifications", None)
+                            st.session_state.pop("merged_data", None)
+                            st.session_state.current_page = "classify"
+                            st.rerun()
 
-                            # Prompt to navigate to classification page
-                            st.info(label("go_to_classify"))
                         else:
                             st.error(label("import_failed", error=response.text))
 

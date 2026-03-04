@@ -3,6 +3,7 @@ Data access layer (Repository pattern)
 """
 
 import json
+import re
 import uuid
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -262,6 +263,8 @@ class RuleRepository:
         name: Optional[str] = None,
         conditions: Optional[Dict[str, Any]] = None,
         account: Optional[str] = None,
+        confidence: Optional[float] = None,
+        source: Optional[str] = None,
     ) -> Optional[Rule]:
         """Update rule"""
         rule = RuleRepository.get_by_id(db, rule_id)
@@ -272,6 +275,10 @@ class RuleRepository:
                 rule.conditions = json.dumps(conditions, ensure_ascii=False)
             if account is not None:
                 rule.account = account
+            if confidence is not None:
+                rule.confidence = confidence
+            if source is not None:
+                rule.source = source
             rule.updated_at = datetime.utcnow().isoformat()
             db.commit()
             db.refresh(rule)
@@ -290,22 +297,104 @@ class RuleRepository:
 
     @staticmethod
     def match_transaction(
-        db: Session, peer: str, item: str, category: str
+        db: Session,
+        peer: str,
+        item: str,
+        category: str,
+        provider: str = "",
+        raw_data: str = "",
+        tx_type: str = "",
+        tx_time: str = "",
+        tx_fields: Optional[Dict[str, Any]] = None,
     ) -> List[Rule]:
         """Match all applicable rules for a transaction"""
         rules = RuleRepository.list_all(db)
         matched_rules = []
+        provider = (provider or "").strip().lower()
+        tx_fields = tx_fields or {}
+        tx_fields_normalized = {str(k): str(v or "") for k, v in tx_fields.items()}
+        tx_time = str(tx_time or tx_fields_normalized.get("time", "")).strip()
+        haystack = " ".join(
+            [
+                str(peer or ""),
+                str(item or ""),
+                str(category or ""),
+                str(tx_type or ""),
+                str(tx_time or ""),
+                str(raw_data or ""),
+                " ".join(tx_fields_normalized.values()),
+            ]
+        )
+
+        def _to_minutes(value: str) -> Optional[int]:
+            """Parse first HH:MM from text."""
+            text = str(value or "")
+            match = re.search(r"(\d{1,2}):(\d{2})", text)
+            if not match:
+                return None
+            hour = int(match.group(1))
+            minute = int(match.group(2))
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                return None
+            return hour * 60 + minute
+
+        def _time_matches(rule_time: str, tx_minutes: Optional[int]) -> bool:
+            """Match a DEG-style time token like 06:00-10:00."""
+            token = str(rule_time or "").strip()
+            if not token or token == "/":
+                return True
+            if tx_minutes is None:
+                return False
+
+            for sep in ("-", "~", "～", "—", "－", "至", "to"):
+                if sep in token:
+                    start_text, end_text = token.split(sep, 1)
+                    start = _to_minutes(start_text)
+                    end = _to_minutes(end_text)
+                    if start is None or end is None:
+                        return False
+                    if start <= end:
+                        return start <= tx_minutes <= end
+                    # Overnight window, e.g. 22:00-02:00
+                    return tx_minutes >= start or tx_minutes <= end
+
+            exact = _to_minutes(token)
+            return exact is not None and tx_minutes == exact
+
+        tx_minutes = _to_minutes(tx_time)
 
         for rule in rules:
             conditions = json.loads(rule.conditions)
+            if conditions.get("skip") is True or conditions.get("_deg_only") is True:
+                continue
             match = True
 
+            # Optional provider condition (string or list).
+            if "provider" in conditions:
+                expected = conditions["provider"]
+                if isinstance(expected, str):
+                    expected = [expected]
+                normalized = {str(x).strip().lower() for x in expected if str(x).strip()}
+                if normalized and provider not in normalized:
+                    match = False
+
+            # DEG-style regex condition.
+            if match and "regexp" in conditions:
+                regex_text = str(conditions.get("regexp", "")).strip()
+                if regex_text:
+                    try:
+                        if re.search(regex_text, haystack, flags=re.IGNORECASE) is None:
+                            match = False
+                    except re.error:
+                        match = False
+
             # Check peer conditions
-            if "peer" in conditions:
+            if match and "peer" in conditions:
                 peer_conditions = conditions["peer"]
                 if isinstance(peer_conditions, str):
                     peer_conditions = [peer_conditions]
-                if not any(p in peer for p in peer_conditions):
+                tokens = [str(p).strip() for p in peer_conditions if str(p).strip()]
+                if "/" not in tokens and not any(token in str(peer or "") for token in tokens):
                     match = False
 
             # Check item conditions
@@ -313,7 +402,8 @@ class RuleRepository:
                 item_conditions = conditions["item"]
                 if isinstance(item_conditions, str):
                     item_conditions = [item_conditions]
-                if not any(i in item for i in item_conditions):
+                tokens = [str(i).strip() for i in item_conditions if str(i).strip()]
+                if "/" not in tokens and not any(token in str(item or "") for token in tokens):
                     match = False
 
             # Check category conditions
@@ -321,8 +411,85 @@ class RuleRepository:
                 category_conditions = conditions["category"]
                 if isinstance(category_conditions, str):
                     category_conditions = [category_conditions]
-                if category not in category_conditions:
+                tokens = [str(c).strip() for c in category_conditions if str(c).strip()]
+                if "/" not in tokens and not any(token in str(category or "") for token in tokens):
                     match = False
+
+            # DEG time condition such as "06:00-10:00".
+            if match and "time" in conditions:
+                time_conditions = conditions["time"]
+                if isinstance(time_conditions, str):
+                    time_conditions = [time_conditions]
+                tokens = [str(v).strip() for v in time_conditions if str(v).strip()]
+                if "/" not in tokens and not any(_time_matches(token, tx_minutes) for token in tokens):
+                    match = False
+
+            # Check transaction type conditions against normalized tx_type.
+            if match and "type" in conditions:
+                type_conditions = conditions["type"]
+                if isinstance(type_conditions, str):
+                    type_conditions = [type_conditions]
+                tokens = [str(v).strip() for v in type_conditions if str(v).strip()]
+                if "/" not in tokens and not any(token in str(tx_type or "") for token in tokens):
+                    match = False
+
+            # DEG transactionType / txType (provider specific transaction subtype).
+            tx_type_detail = str(tx_fields_normalized.get("txType", "")).strip()
+            if match and "transactionType" in conditions:
+                tx_type_conditions = conditions["transactionType"]
+                if isinstance(tx_type_conditions, str):
+                    tx_type_conditions = [tx_type_conditions]
+                tokens = [str(v).strip() for v in tx_type_conditions if str(v).strip()]
+                if "/" not in tokens and not any(token in tx_type_detail for token in tokens):
+                    match = False
+            if match and "txType" in conditions:
+                tx_type_conditions = conditions["txType"]
+                if isinstance(tx_type_conditions, str):
+                    tx_type_conditions = [tx_type_conditions]
+                tokens = [str(v).strip() for v in tx_type_conditions if str(v).strip()]
+                if "/" not in tokens and not any(token in tx_type_detail for token in tokens):
+                    match = False
+
+            # Provider-specific custom fields (e.g., method/status/txType).
+            if match:
+                reserved = {
+                    "provider",
+                    "regexp",
+                    "peer",
+                    "item",
+                    "category",
+                    "skip",
+                    "_deg_only",
+                    "_deg_has_target",
+                    "transactionType",
+                    "tx_type",
+                    "type",
+                    "txType",
+                    "time",
+                    "sep",
+                    "fullMatch",
+                    "methodAccount",
+                    "commissionAccount",
+                    "pnlAccount",
+                    "targetAccount",
+                    "description",
+                    "source",
+                    "confidence",
+                }
+                for key, expected in conditions.items():
+                    if key in reserved:
+                        continue
+                    actual = tx_fields_normalized.get(str(key), "")
+                    if isinstance(expected, str):
+                        expected = [expected]
+                    expected_tokens = [str(x).strip() for x in expected if str(x).strip()]
+                    if (
+                        expected_tokens
+                        and "/" not in expected_tokens
+                        and not any(token in actual for token in expected_tokens)
+                    ):
+                        match = False
+                        break
 
             if match:
                 matched_rules.append(rule)

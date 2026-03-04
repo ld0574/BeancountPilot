@@ -141,6 +141,18 @@ If your input source name differs from DEG provider codes, configure aliases in 
 ### 3. AI Classification
 
 The system automatically uses AI to classify transactions, and you can manually adjust classification results.
+Rule pipeline is now DEG-first: existing DEG rules are matched first, unknown records are sent to AI, and high-confidence AI results can be turned into auto rules.
+Rule Management in Settings now manages DEG-oriented rules (global + provider-specific). DEG rule fields reference:
+https://deb-sig.github.io/double-entry-generator/configuration/rules.html
+
+You can also import/export full DEG YAML templates in `Settings -> Rule Management`:
+
+- Import provider config files like `import/alipay.yaml` directly.
+- Export provider YAML and run DEG with:
+
+```bash
+double-entry-generator translate --config ./alipay.yaml --provider alipay --output ./alipay.beancount alipay_records.csv
+```
 
 ### 4. Generate Beancount File
 

@@ -1,8 +1,5 @@
-"""
-File upload routes
-"""
+"""File upload routes."""
 
-import csv
 import io
 import json
 from typing import List
@@ -18,6 +15,7 @@ from src.core.deg_catalog import (
     get_bank_style_providers,
     get_official_provider_codes,
 )
+from src.utils.csv_table_parser import parse_csv_rows
 
 router = APIRouter()
 
@@ -65,16 +63,6 @@ def _resolve_provider(provider: str, db: Session) -> tuple[str, str, bool]:
     return raw_provider, normalized_provider, is_bank_style
 
 
-def _decode_csv_content(content: bytes) -> str:
-    """Decode CSV bytes with common encodings used by Chinese exports."""
-    for encoding in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
-        try:
-            return content.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    raise ValueError("Unsupported file encoding. Please export CSV as UTF-8 or GBK.")
-
-
 def _pick_first(row: dict, keys: list[str], default: str = "") -> str:
     """Get the first non-empty value from candidate keys."""
     for key in keys:
@@ -102,19 +90,20 @@ def _parse_amount(value: str) -> float:
     )
     if not cleaned:
         return 0.0
-    return float(cleaned)
+    try:
+        return float(cleaned)
+    except ValueError:
+        return 0.0
 
 
-def _load_table_rows(file: UploadFile, content: bytes) -> list[dict]:
+def _load_table_rows(file: UploadFile, content: bytes, provider: str = "") -> list[dict]:
     """
     Load tabular rows from CSV/XLS/XLSX into a list of dictionaries.
     """
     filename = (file.filename or "").lower()
 
     if filename.endswith(".csv"):
-        csv_file = io.StringIO(_decode_csv_content(content))
-        reader = csv.DictReader(csv_file)
-        return list(reader)
+        return parse_csv_rows(content, provider=provider)
 
     if filename.endswith(".xls") or filename.endswith(".xlsx"):
         try:
@@ -158,21 +147,35 @@ async def upload_csv(
 
         # Read file content
         content = await file.read()
-        rows = _load_table_rows(file, content)
+        rows = _load_table_rows(file, content, provider=provider)
         transactions = []
 
         for row in rows:
             # Normalize keys to text for robust matching.
             row = {str(k).strip(): v for k, v in dict(row).items()}
+            normalized_row = dict(row)
 
             # Map fields based on provider
             if provider == "alipay":
                 peer = row.get("交易对方", "")
                 item = row.get("商品说明", "")
-                category = row.get("商品说明", "")
+                category = _pick_first(
+                    row,
+                    ["消费分类", "交易分类", "分类", "category"],
+                    default=row.get("商品说明", ""),
+                )
                 transaction_type = row.get("收/支", "")
                 time = row.get("交易时间", "")
                 amount = _parse_amount(row.get("金额", "0"))
+                normalized_row["category"] = category
+                normalized_row["method"] = _pick_first(
+                    row,
+                    ["支付方式", "付款方式", "支付渠道", "method"],
+                )
+                normalized_row["status"] = _pick_first(
+                    row,
+                    ["交易状态", "状态", "当前状态", "status"],
+                )
             elif provider == "wechat":
                 peer = row.get("交易对方", "")
                 item = row.get("商品", "")
@@ -180,6 +183,10 @@ async def upload_csv(
                 transaction_type = row.get("收/支", "")
                 time = row.get("交易时间", "")
                 amount = _parse_amount(row.get("金额(元)", "0"))
+                normalized_row["status"] = _pick_first(
+                    row,
+                    ["当前状态", "交易状态", "状态", "status"],
+                )
             elif is_bank_style_provider:
                 peer = _pick_first(
                     row,
@@ -205,9 +212,19 @@ async def upload_csv(
                     row,
                     ["收/支", "借贷标志", "借贷方向", "交易类型", "支出或收入", "借贷", "type"],
                 )
+                tx_type_text = _pick_first(
+                    row,
+                    ["摘要", "交易摘要", "txType", "用途", "备注"],
+                )
+                if tx_type_text:
+                    normalized_row["txType"] = tx_type_text
                 time = _pick_first(
                     row,
                     ["交易时间", "交易日期", "记账日期", "入账时间", "发生时间", "日期", "time", "交易日"],
+                )
+                normalized_row["status"] = _pick_first(
+                    row,
+                    ["交易状态", "当前状态", "状态", "status"],
                 )
 
                 amount = 0.0
@@ -233,15 +250,64 @@ async def upload_csv(
                     )
                     amount = income_amount if income_amount > 0 else expense_amount
             else:
-                # Generic CSV format
-                peer = row.get("peer", "")
-                item = row.get("item", "")
-                category = row.get("category", "")
-                transaction_type = row.get("type", "")
-                time = row.get("time", "")
-                amount = _parse_amount(row.get("amount", "0"))
+                # Generic CSV format (supports both EN and common CN headers).
+                peer = _pick_first(
+                    row,
+                    [
+                        "peer",
+                        "交易对方",
+                        "对方户名",
+                        "对方账户",
+                        "商户名称",
+                        "收款方",
+                        "付款方",
+                    ],
+                )
+                item = _pick_first(
+                    row,
+                    ["item", "商品说明", "商品", "交易说明", "摘要", "备注", "交易描述"],
+                    default=peer,
+                )
+                category = _pick_first(
+                    row,
+                    ["category", "交易分类", "消费分类", "分类", "类型"],
+                    default=item,
+                )
+                transaction_type = _pick_first(
+                    row,
+                    ["type", "收/支", "交易类型", "借贷标志", "借贷方向"],
+                )
+                time = _pick_first(
+                    row,
+                    ["time", "交易时间", "交易日期", "记账日期", "日期"],
+                )
+                amount = 0.0
+                for key in ("amount", "金额", "金额(元)", "交易金额"):
+                    raw_amount = str(row.get(key, "")).strip()
+                    if raw_amount:
+                        amount = _parse_amount(raw_amount)
+                        break
+                if amount == 0.0:
+                    income_amount = _parse_amount(
+                        _pick_first(row, ["收入金额", "收入", "贷方金额"])
+                    )
+                    expense_amount = _parse_amount(
+                        _pick_first(row, ["支出金额", "支出", "借方金额"])
+                    )
+                    amount = income_amount if income_amount > 0 else expense_amount
+                normalized_row["status"] = _pick_first(row, ["status", "状态"])
 
             # Create transaction record
+            # Skip obvious non-transaction rows (metadata/header noise).
+            if (
+                not str(time or "").strip()
+                and not str(peer or "").strip()
+                and not str(item or "").strip()
+                and not str(category or "").strip()
+                and amount == 0.0
+            ):
+                continue
+
             transaction = TransactionRepository.create(
                 db=db,
                 peer=peer,
@@ -251,7 +317,7 @@ async def upload_csv(
                 time=time,
                 amount=amount,
                 provider=provider,
-                raw_data=str(row),
+                raw_data=json.dumps(normalized_row, ensure_ascii=False),
             )
 
             transactions.append(transaction)

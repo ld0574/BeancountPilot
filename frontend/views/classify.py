@@ -33,7 +33,7 @@ def render():
     if "transactions" not in st.session_state:
         st.warning(label("no_transactions_warning"))
         st.info(label("go_to_upload"))
-        if st.button(label("upload_files"), type="primary", use_container_width=True):
+        if st.button(label("upload_files"), type="primary", width="stretch"):
             st.session_state.current_page = "upload"
             st.rerun()
         return
@@ -84,10 +84,10 @@ def render():
     col1, col2, col3 = st.columns([1, 1, 1.6])
 
     with col1:
-        classify_button = st.button(label("ai_classify"), type="primary", use_container_width=True)
+        classify_button = st.button(label("ai_classify"), type="primary", width="stretch")
 
     with col2:
-        if st.button(label("reclassify"), use_container_width=True):
+        if st.button(label("reclassify"), width="stretch"):
             st.session_state.classifications = None
             st.rerun()
     with col3:
@@ -156,19 +156,21 @@ def render():
             df = pd.DataFrame(merged_data)
 
             # Display editable table
+            account_options = build_account_options(
+                st.session_state.get("chart_of_accounts", ""),
+                merged_data,
+            )
             edited_df = st.data_editor(
                 df,
                 num_rows="dynamic",
-                use_container_width=True,
+                width="stretch",
                 column_config={
                     "peer": st.column_config.TextColumn(t("payee"), width="medium"),
                     "item": st.column_config.TextColumn(t("item_label"), width="medium"),
                     "amount": st.column_config.NumberColumn(t("amount"), format="%.2f"),
                     "account": st.column_config.SelectboxColumn(
                         label("account"),
-                        options=parse_chart_of_accounts(
-                            st.session_state.get("chart_of_accounts", "")
-                        ),
+                        options=account_options,
                         required=True,
                         width="large",
                     ),
@@ -186,7 +188,7 @@ def render():
             )
 
             # Save changes
-            if st.button(label("save_changes"), use_container_width=True):
+            if st.button(label("save_changes"), width="stretch"):
                 # TODO: Save changes to backend
                 st.success(label("changes_saved"))
 
@@ -197,7 +199,7 @@ def render():
             col1, col2 = st.columns([1, 1])
 
             with col1:
-                if st.button(label("generate_and_download"), type="primary", use_container_width=True):
+                if st.button(label("generate_and_download"), type="primary", width="stretch"):
                     with st.spinner(label("generating")):
                         try:
                             import requests
@@ -227,7 +229,7 @@ def render():
                                         data=result["beancount_file"],
                                         file_name="output.beancount",
                                         mime="text/plain",
-                                        use_container_width=True,
+                                        width="stretch",
                                     )
                                 else:
                                     st.error(label("generate_failed", message=result['message']))
@@ -240,7 +242,7 @@ def render():
                             st.error(label("generate_failed", message=str(e)))
 
             with col2:
-                if st.button(label("preview"), use_container_width=True):
+                if st.button(label("preview"), width="stretch"):
                     # Preview Beancount format
                     preview = generate_beancount_preview(edited_df)
                     st.code(preview, language="text")
@@ -305,6 +307,30 @@ def parse_chart_of_accounts(chart_of_accounts):
         if line and not line.startswith("#"):
             accounts.append(line)
     return accounts
+
+
+def build_account_options(chart_of_accounts, rows=None):
+    """Build editor account options from chart + existing classified accounts."""
+    options = []
+    seen = set()
+
+    for account in parse_chart_of_accounts(chart_of_accounts):
+        key = str(account).strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        options.append(key)
+
+    for row in rows or []:
+        account = str((row or {}).get("account", "")).strip()
+        if not account or account in seen:
+            continue
+        seen.add(account)
+        options.append(account)
+
+    if not options:
+        return ["Expenses:Misc"]
+    return options
 
 def generate_beancount_preview(df):
     """Generate Beancount format preview"""

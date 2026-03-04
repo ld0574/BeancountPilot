@@ -170,6 +170,7 @@ class DoubleEntryGenerator:
         transactions: list[Dict[str, Any]],
         provider: str = "alipay",
         config_content: Optional[str] = None,
+        deg_rules: Optional[list[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Generate Beancount file from transaction list
@@ -197,7 +198,7 @@ class DoubleEntryGenerator:
                     f.write(config_content)
             else:
                 # Use default configuration
-                self._write_default_config(config_file, provider)
+                self._write_default_config(config_file, provider, deg_rules=deg_rules)
 
             # Output file
             output_file = temp_path / "output.beancount"
@@ -264,7 +265,12 @@ class DoubleEntryGenerator:
                         row[field] = tx.get("peer", "")
                 writer.writerow(row)
 
-    def _write_default_config(self, config_file: Path, provider: str) -> None:
+    def _write_default_config(
+        self,
+        config_file: Path,
+        provider: str,
+        deg_rules: Optional[list[Dict[str, Any]]] = None,
+    ) -> None:
         """Write default configuration file"""
         import yaml
 
@@ -275,7 +281,7 @@ class DoubleEntryGenerator:
             "defaultCurrency": "CNY",
             "title": "BeancountPilot",
             provider: {
-                "rules": [],
+                "rules": deg_rules or [],
             },
         }
 

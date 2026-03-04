@@ -3,3 +3,6 @@ primaryColor = "#B19674"
 backgroundColor = "#F4EFE6"
 secondaryBackgroundColor = "#EDE3D2"
 textColor = "#2F261D"
+
+[client]
+toolbarMode = "minimal"

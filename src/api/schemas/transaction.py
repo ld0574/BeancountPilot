@@ -128,6 +128,8 @@ class RuleUpdate(BaseModel):
     name: Optional[str] = None
     conditions: Optional[Dict[str, Any]] = None
     account: Optional[str] = None
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    source: Optional[str] = Field(default=None, description="user or auto")
 
 
 class RuleResponse(BaseModel):
