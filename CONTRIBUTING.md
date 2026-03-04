@@ -46,8 +46,7 @@ The backend API will be available at `http://localhost:8000`.
 ### Run the Frontend
 
 ```bash
-cd frontend
-streamlit run app.py
+streamlit run frontend/app.py
 ```
 
 The frontend will be available at `http://localhost:8501`.

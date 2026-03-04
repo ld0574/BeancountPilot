@@ -2,9 +2,17 @@
 Settings page
 """
 
+import sys
+from pathlib import Path
+
 import streamlit as st
 import pandas as pd
-from frontend.i18n import t
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from frontend.i18n import init_i18n, t
 from frontend.config import get_api_url, get_health_check_url, get_api_timeout
 
 
@@ -278,10 +286,14 @@ def render():
 
         # Version information
         st.markdown(f"### {t('version_info')}")
-
         st.info(f"""
         - **{t('beancountpilot')}**: v0.1.0
         - **{t('python')}**: 3.11+
         - **{t('streamlit')}**: {t('latest')}
         - **{t('fastapi')}**: {t('latest')}
         """)
+
+
+if __name__ == "__main__":
+    init_i18n()
+    render()

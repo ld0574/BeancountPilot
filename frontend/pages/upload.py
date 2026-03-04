@@ -2,10 +2,18 @@
 Upload file page
 """
 
+import sys
+from pathlib import Path
+
 import streamlit as st
 import pandas as pd
 import io
-from frontend.i18n import t
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from frontend.i18n import init_i18n, t
 from frontend.config import get_api_url, get_api_timeout
 
 
@@ -107,7 +115,6 @@ def render():
     # Usage guide
     st.markdown("---")
     st.subheader(t("usage_guide"))
-
     st.markdown(f"""
     ### {t('supported_formats')}
 
@@ -133,3 +140,8 @@ def render():
     - {t('first_line_column')}
     - {t('amount_format')}
     """)
+
+
+if __name__ == "__main__":
+    init_i18n()
+    render()
