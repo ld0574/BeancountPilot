@@ -24,12 +24,16 @@ Transaction to classify:
 
 Please analyze the above transaction, select the most appropriate account from the chart of accounts, and provide a confidence score (0-1).
 Rules:
-- You must choose an account exactly from "User chart of accounts". Do not invent accounts.
+- You must choose targetAccount and methodAccount exactly from "User chart of accounts". Do not invent accounts.
+- targetAccount = category account (expense/income/etc).
+- methodAccount = payment/funding account (typically Assets:* or Liabilities:*).
+- Never output empty methodAccount.
 - Keep reasoning concise (one short sentence).
 
 Output format (JSON):
 {{
-  "account": "Expenses:Food:Dining",
+  "targetAccount": "Expenses:Food:Dining",
+  "methodAccount": "Assets:Bank:Alipay",
   "confidence": 0.95,
   "reasoning": "Explain the classification reason"
 }}
@@ -51,14 +55,18 @@ List of transactions to classify:
 
 Please analyze the above transactions, for each transaction select the most appropriate account from the chart of accounts, and provide a confidence score (0-1).
 Rules:
-- You must choose each account exactly from "User chart of accounts". Do not invent accounts.
+- You must choose targetAccount and methodAccount exactly from "User chart of accounts". Do not invent accounts.
+- targetAccount = category account (expense/income/etc).
+- methodAccount = payment/funding account (typically Assets:* or Liabilities:*).
+- Never output empty methodAccount.
 - Keep reasoning concise (one short sentence).
 
 Output format (JSON array):
 [
   {{
     "index": 0,
-    "account": "Expenses:Food:Dining",
+    "targetAccount": "Expenses:Food:Dining",
+    "methodAccount": "Assets:Bank:Alipay",
     "confidence": 0.95,
     "reasoning": "Explain the classification reason"
   }},
@@ -157,15 +165,24 @@ def parse_classification_response(response: str) -> Dict[str, Any]:
     import re
 
     # Try to extract JSON part
-    json_match = re.search(r'\{[^{}]*"account"[^{}]*\}', response, re.DOTALL)
+    json_match = re.search(r"\{[\s\S]*\}", response, re.DOTALL)
     if json_match:
         response = json_match.group()
 
     try:
         result = json.loads(response)
-        # Ensure required fields exist
-        if "account" not in result:
-            result["account"] = "Expenses:Misc"
+        target = str(result.get("targetAccount", "")).strip()
+        account = str(result.get("account", "")).strip()
+        if not target and account:
+            target = account
+        if not target:
+            target = "Expenses:Misc"
+        result["targetAccount"] = target
+        result["account"] = target
+
+        method = str(result.get("methodAccount", "")).strip()
+        result["methodAccount"] = method
+
         if "confidence" not in result:
             result["confidence"] = 0.5
         if "reasoning" not in result:
@@ -175,6 +192,8 @@ def parse_classification_response(response: str) -> Dict[str, Any]:
         # Parse failed, return default values
         return {
             "account": "Expenses:Misc",
+            "targetAccount": "Expenses:Misc",
+            "methodAccount": "",
             "confidence": 0.0,
             "reasoning": f"Parse failed: {response[:100]}",
         }
@@ -194,16 +213,27 @@ def parse_batch_classification_response(response: str) -> List[Dict[str, Any]]:
     import re
 
     # Try to extract JSON array part
-    json_match = re.search(r'\[[^\]]*\]', response, re.DOTALL)
+    json_match = re.search(r"\[[\s\S]*\]", response, re.DOTALL)
     if json_match:
         response = json_match.group()
 
     try:
         results = json.loads(response)
+        if not isinstance(results, list):
+            return []
         # Ensure each result has required fields
         for result in results:
-            if "account" not in result:
-                result["account"] = "Expenses:Misc"
+            if not isinstance(result, dict):
+                continue
+            target = str(result.get("targetAccount", "")).strip()
+            account = str(result.get("account", "")).strip()
+            if not target and account:
+                target = account
+            if not target:
+                target = "Expenses:Misc"
+            result["targetAccount"] = target
+            result["account"] = target
+            result["methodAccount"] = str(result.get("methodAccount", "")).strip()
             if "confidence" not in result:
                 result["confidence"] = 0.5
             if "reasoning" not in result:

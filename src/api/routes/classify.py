@@ -62,6 +62,8 @@ async def classify_transactions(
         for result in results:
             transaction = result["transaction"]
             account = result["account"]
+            target_account = result.get("targetAccount", account)
+            method_account = result.get("methodAccount", "")
             confidence = result["confidence"]
             reasoning = result["reasoning"]
             source = result["source"]
@@ -80,6 +82,8 @@ async def classify_transactions(
                 ClassificationResult(
                     transaction_id=transaction.get("id", ""),
                     account=account,
+                    targetAccount=target_account,
+                    methodAccount=method_account,
                     confidence=confidence,
                     reasoning=reasoning,
                     source=source,

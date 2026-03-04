@@ -264,6 +264,7 @@ def render():
                             st.session_state.data_source = provider or provider_selected
                             st.session_state.pop("classifications", None)
                             st.session_state.pop("merged_data", None)
+                            st.session_state.auto_classify_pending = True
                             st.session_state.current_page = "classify"
                             st.rerun()
 

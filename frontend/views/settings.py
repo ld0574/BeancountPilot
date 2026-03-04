@@ -372,6 +372,30 @@ def render():
         unsafe_allow_html=True,
     )
 
+    def _clear_ai_dialog_state() -> None:
+        """Clear AI settings dialog state."""
+        st.session_state.pop("ai_profile_edit_id", None)
+        st.session_state.pop("ai_profile_delete_id", None)
+
+    def _clear_rule_dialog_state() -> None:
+        """Clear Rules tab dialog state."""
+        active_rule_id = str(st.session_state.get("rule_edit_dialog_id", "")).strip()
+        if active_rule_id:
+            st.session_state.pop(f"rule_edit_scope_{active_rule_id}", None)
+            st.session_state.pop(f"rule_edit_provider_{active_rule_id}", None)
+            st.session_state.pop(f"rule_edit_provider_text_{active_rule_id}", None)
+            st.session_state.pop(f"rule_edit_payload_json_{active_rule_id}", None)
+            st.session_state.pop(f"rule_edit_payload_yaml_{active_rule_id}", None)
+            st.session_state.pop(f"rule_edit_payload_yaml_normalized_{active_rule_id}", None)
+        st.session_state.pop("rule_edit_dialog_id", None)
+        st.session_state.pop("rule_delete_confirm_id", None)
+        st.session_state.pop("rule_add_dialog_open", None)
+        st.session_state.pop("rule_cleanup_dialog_open", None)
+        st.session_state.pop("rule_cleanup_scope", None)
+        st.session_state.pop("rule_cleanup_provider", None)
+        st.session_state.pop("rule_import_dialog_open", None)
+        st.session_state.pop("rule_import_dialog_provider", None)
+
     # Tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs(
         [
@@ -585,6 +609,8 @@ def render():
                         type="tertiary",
                         width="content",
                     ):
+                        _clear_rule_dialog_state()
+                        st.session_state.pop("ai_profile_delete_id", None)
                         st.session_state.ai_profile_edit_id = profile_id
                         st.rerun()
                 with action_col2:
@@ -594,6 +620,8 @@ def render():
                         type="tertiary",
                         width="content",
                     ):
+                        _clear_rule_dialog_state()
+                        st.session_state.pop("ai_profile_edit_id", None)
                         st.session_state.ai_profile_delete_id = profile_id
                         st.rerun()
 
@@ -601,7 +629,10 @@ def render():
         if edit_profile_id and edit_profile_id in profile_by_id:
             editing_profile = profile_by_id[edit_profile_id]
             if hasattr(st, "dialog"):
-                @st.dialog(label("ai_profile_edit_dialog_title"))
+                @st.dialog(
+                    label("ai_profile_edit_dialog_title"),
+                    on_dismiss=lambda: st.session_state.pop("ai_profile_edit_id", None),
+                )
                 def _render_ai_profile_edit_dialog():
                     with st.form(f"ai_profile_edit_form_{edit_profile_id}"):
                         edited_name = st.text_input(
@@ -696,7 +727,10 @@ def render():
         if delete_profile_id and delete_profile_id in profile_by_id:
             deleting_profile = profile_by_id[delete_profile_id]
             if hasattr(st, "dialog"):
-                @st.dialog(label("ai_profile_delete_confirm_title"))
+                @st.dialog(
+                    label("ai_profile_delete_confirm_title"),
+                    on_dismiss=lambda: st.session_state.pop("ai_profile_delete_id", None),
+                )
                 def _render_ai_profile_delete_confirm_dialog():
                     st.warning(
                         label(
@@ -902,10 +936,12 @@ def render():
             st.subheader(label("rule_table_title"))
         with table_add_col:
             if st.button(label("rule_add_open_modal"), type="primary", width="stretch"):
+                _clear_ai_dialog_state()
                 st.session_state.rule_add_dialog_open = True
                 st.rerun()
         with table_cleanup_col:
             if st.button(label("rule_cleanup_auto_open_modal"), width="stretch"):
+                _clear_ai_dialog_state()
                 selected_scope = str(st.session_state.get("rule_filter_scope", "all")).strip().lower()
                 if selected_scope not in {"all", "global", "provider"}:
                     selected_scope = "all"
@@ -922,6 +958,22 @@ def render():
             if isinstance(cond_provider, list):
                 return [str(v).strip().lower() for v in cond_provider if str(v).strip()]
             return []
+
+        def _rule_target_method(rule: dict) -> tuple[str, str]:
+            """Split stored rule fields into targetAccount and methodAccount for UI."""
+            conditions = (rule or {}).get("conditions", {}) or {}
+            has_target = bool(conditions.get("_deg_has_target", True))
+            target_account = str((rule or {}).get("account", "")).strip() if has_target else ""
+            method_raw = conditions.get("methodAccount", "")
+            if isinstance(method_raw, list):
+                method_account = next((str(v).strip() for v in method_raw if str(v).strip()), "")
+            else:
+                method_account = str(method_raw or "").strip()
+
+            # Legacy/imported method-only rules may store method in `account`.
+            if not has_target and not method_account:
+                method_account = str((rule or {}).get("account", "")).strip()
+            return target_account, method_account
 
         scope_col, provider_col, source_col, keyword_col = st.columns([1, 1, 1, 1.4])
         with scope_col:
@@ -962,6 +1014,17 @@ def render():
 
         filtered_rules = []
         try:
+            def _clear_rule_edit_state():
+                active_rule_id = str(st.session_state.get("rule_edit_dialog_id", "")).strip()
+                if active_rule_id:
+                    st.session_state.pop(f"rule_edit_scope_{active_rule_id}", None)
+                    st.session_state.pop(f"rule_edit_provider_{active_rule_id}", None)
+                    st.session_state.pop(f"rule_edit_provider_text_{active_rule_id}", None)
+                    st.session_state.pop(f"rule_edit_payload_json_{active_rule_id}", None)
+                    st.session_state.pop(f"rule_edit_payload_yaml_{active_rule_id}", None)
+                    st.session_state.pop(f"rule_edit_payload_yaml_normalized_{active_rule_id}", None)
+                st.session_state.pop("rule_edit_dialog_id", None)
+
             response = requests.get(
                 get_api_url("/rules"),
                 params={"skip": 0, "limit": 1000},
@@ -987,9 +1050,12 @@ def render():
                         continue
 
                     if keyword_filter:
+                        target_text, method_text = _rule_target_method(rule)
                         haystack = " ".join(
                             [
                                 str(rule.get("name", "")),
+                                target_text,
+                                method_text,
                                 str(rule.get("account", "")),
                                 str(rule.get("source", "")),
                                 " ".join(providers),
@@ -1101,11 +1167,12 @@ def render():
                             unsafe_allow_html=True,
                         )
 
-                    header_cols = st.columns([0.9, 1.0, 2.0, 0.8, 0.9, 3.4, 1.8])
+                    header_cols = st.columns([0.8, 0.9, 1.8, 1.8, 0.8, 0.8, 2.8, 1.8])
                     header_titles = [
                         label("rule_col_scope"),
                         label("rule_col_provider"),
-                        label("rule_col_account"),
+                        label("target_account"),
+                        label("method_account"),
                         label("rule_col_confidence"),
                         label("rule_col_source"),
                         label("rule_col_conditions"),
@@ -1122,6 +1189,7 @@ def render():
                     for rule in page_rules:
                         rule_id = str(rule.get("id", ""))
                         conditions = rule.get("conditions", {}) or {}
+                        target_account_text, method_account_text = _rule_target_method(rule)
                         providers = _rule_provider_list(conditions)
                         provider_display = (
                             ", ".join(provider_name_map.get(code, code) for code in providers)
@@ -1151,18 +1219,19 @@ def render():
                         if len(cond_summary) > 96:
                             cond_summary = cond_summary[:95] + "…"
 
-                        row_cols = st.columns([0.9, 1.0, 2.0, 0.8, 0.9, 3.4, 1.8])
+                        row_cols = st.columns([0.8, 0.9, 1.8, 1.8, 0.8, 0.8, 2.8, 1.8])
                         _render_wrap_cell(
                             row_cols[0],
                             label("scope_provider_specific") if providers else label("scope_global")
                         )
                         _render_wrap_cell(row_cols[1], provider_display, max_len=40)
-                        _render_wrap_cell(row_cols[2], str(rule.get("account", "")), max_len=58)
-                        _render_wrap_cell(row_cols[3], f"{float(rule.get('confidence', 1.0)):.2f}", max_len=8)
-                        _render_wrap_cell(row_cols[4], str(rule.get("source", "")), max_len=10)
-                        _render_wrap_cell(row_cols[5], cond_summary, max_len=96)
+                        _render_wrap_cell(row_cols[2], target_account_text, max_len=50)
+                        _render_wrap_cell(row_cols[3], method_account_text, max_len=50)
+                        _render_wrap_cell(row_cols[4], f"{float(rule.get('confidence', 1.0)):.2f}", max_len=8)
+                        _render_wrap_cell(row_cols[5], str(rule.get("source", "")), max_len=10)
+                        _render_wrap_cell(row_cols[6], cond_summary, max_len=96)
 
-                        with row_cols[6]:
+                        with row_cols[7]:
                             action_col1, action_col2 = st.columns(2)
                             with action_col1:
                                 if st.button(
@@ -1171,6 +1240,8 @@ def render():
                                     type="tertiary",
                                     width="content",
                                 ):
+                                    _clear_ai_dialog_state()
+                                    st.session_state.pop("rule_delete_confirm_id", None)
                                     st.session_state.rule_edit_dialog_id = rule_id
                                     st.rerun()
                             with action_col2:
@@ -1180,237 +1251,142 @@ def render():
                                     type="tertiary",
                                     width="content",
                                 ):
+                                    _clear_ai_dialog_state()
+                                    _clear_rule_edit_state()
                                     st.session_state.rule_delete_confirm_id = rule_id
                                     st.rerun()
 
                     dialog_rule_id = str(st.session_state.get("rule_edit_dialog_id", "")).strip()
-                    if dialog_rule_id and dialog_rule_id in rule_index:
+                    if (
+                        dialog_rule_id
+                        and dialog_rule_id in rule_index
+                        and not str(st.session_state.get("rule_delete_confirm_id", "")).strip()
+                    ):
                         dialog_rule = rule_index[dialog_rule_id]
                         current_conditions = dialog_rule.get("conditions", {}) or {}
 
-                        def _condition_to_text(value) -> str:
-                            if isinstance(value, list):
-                                return ", ".join(str(v) for v in value)
-                            if value is None:
-                                return ""
-                            return str(value)
-
-                        providers = _rule_provider_list(current_conditions)
-                        scope_default = "provider" if providers else "global"
-                        provider_default = providers[0] if providers else ""
-                        regexp_default = str(current_conditions.get("regexp", "")).strip()
-                        peer_default = _condition_to_text(current_conditions.get("peer", ""))
-                        item_default = _condition_to_text(current_conditions.get("item", ""))
-                        category_default = _condition_to_text(current_conditions.get("category", ""))
-                        tx_type_key = (
-                            "txType"
-                            if ("txType" in current_conditions and "transactionType" not in current_conditions)
-                            else "transactionType"
-                        )
-                        tx_type_default = str(current_conditions.get(tx_type_key, "")).strip()
-
-                        internal_preserve_keys = {"skip", "_deg_only", "_deg_has_target", "sep"}
-                        editable_base_keys = {
-                            "provider",
-                            "regexp",
-                            "peer",
-                            "item",
-                            "category",
-                            "transactionType",
-                            "txType",
-                        }
-                        extra_candidates = [
-                            key for key in current_conditions.keys()
-                            if key not in editable_base_keys and key not in internal_preserve_keys
-                        ]
-                        existing_extra_key = extra_candidates[0] if extra_candidates else ""
-                        existing_extra_value = _condition_to_text(
-                            current_conditions.get(existing_extra_key, "")
-                        ) if existing_extra_key else ""
-                        preserved_extra_items = {
-                            key: current_conditions.get(key)
-                            for key in extra_candidates[1:]
-                        }
+                        if not isinstance(current_conditions, dict):
+                            current_conditions = {}
 
                         if hasattr(st, "dialog"):
-                            @st.dialog(label("rule_edit_dialog_title"))
+                            @st.dialog(
+                                label("rule_edit_dialog_title"),
+                                width="large",
+                                on_dismiss=lambda: _clear_rule_edit_state(),
+                            )
                             def _render_rule_edit_dialog():
                                 edit_scope_key = f"rule_edit_scope_{dialog_rule_id}"
                                 edit_provider_key = f"rule_edit_provider_{dialog_rule_id}"
                                 edit_provider_text_key = f"rule_edit_provider_text_{dialog_rule_id}"
+                                edit_json_key = f"rule_edit_payload_json_{dialog_rule_id}"
 
+                                def _condition_to_text(value) -> str:
+                                    if isinstance(value, list):
+                                        return ", ".join(str(v) for v in value)
+                                    if value is None:
+                                        return ""
+                                    return str(value)
+
+                                providers = _rule_provider_list(current_conditions)
+                                scope_default = "provider" if providers else "global"
+                                provider_default = providers[0] if providers else ""
+                                regexp_default = str(current_conditions.get("regexp", "")).strip()
+                                peer_default = _condition_to_text(current_conditions.get("peer", ""))
+                                item_default = _condition_to_text(current_conditions.get("item", ""))
+                                category_default = _condition_to_text(current_conditions.get("category", ""))
+                                has_target_default = bool(current_conditions.get("_deg_has_target", True))
+                                target_default = (
+                                    str(dialog_rule.get("account", "")).strip()
+                                    if has_target_default else ""
+                                )
+                                method_default = _condition_to_text(current_conditions.get("methodAccount", ""))
+                                if not method_default and not has_target_default:
+                                    method_default = str(dialog_rule.get("account", "")).strip()
+                                tx_type_key = (
+                                    "txType"
+                                    if ("txType" in current_conditions and "transactionType" not in current_conditions)
+                                    else "transactionType"
+                                )
+                                tx_type_default = str(current_conditions.get(tx_type_key, "")).strip()
+
+                                internal_preserve_keys = {"skip", "_deg_only", "_deg_has_target", "sep"}
+                                editable_base_keys = {
+                                    "provider",
+                                    "regexp",
+                                    "peer",
+                                    "item",
+                                    "category",
+                                    "transactionType",
+                                    "txType",
+                                }
+                                extra_candidates = [
+                                    key for key in current_conditions.keys()
+                                    if key not in editable_base_keys and key not in internal_preserve_keys
+                                ]
+                                existing_extra_key = extra_candidates[0] if extra_candidates else ""
+                                existing_extra_value = _condition_to_text(
+                                    current_conditions.get(existing_extra_key, "")
+                                ) if existing_extra_key else ""
+                                preserved_extra_items = {
+                                    key: current_conditions.get(key)
+                                    for key in extra_candidates[1:]
+                                }
+
+                                default_payload = {
+                                    "targetAccount": target_default,
+                                    "methodAccount": method_default,
+                                    "account": target_default,
+                                    "confidence": float(dialog_rule.get("confidence", 1.0)),
+                                    "source": str(dialog_rule.get("source", "user")),
+                                    "conditions": current_conditions,
+                                }
                                 if edit_scope_key not in st.session_state:
                                     st.session_state[edit_scope_key] = scope_default
-                                edit_scope = st.selectbox(
-                                    label("rule_scope"),
-                                    ["global", "provider"],
-                                    key=edit_scope_key,
-                                    format_func=lambda x: (
-                                        label("scope_global")
-                                        if x == "global" else label("scope_provider_specific")
-                                    ),
-                                )
-
-                                edit_provider_code = provider_default
-                                if edit_scope == "provider":
-                                    provider_codes = [code for code, _ in provider_options if code]
-                                    if provider_codes:
-                                        if (
-                                            edit_provider_key not in st.session_state
-                                            or st.session_state[edit_provider_key] not in provider_codes
-                                        ):
-                                            st.session_state[edit_provider_key] = (
-                                                provider_default
-                                                if provider_default in provider_codes
-                                                else provider_codes[0]
-                                            )
-                                        edit_provider_code = st.selectbox(
-                                            label("provider_code"),
-                                            provider_codes,
-                                            key=edit_provider_key,
-                                            format_func=lambda x: next(
-                                                (n for c, n in provider_options if c == x),
-                                                x,
-                                            ),
-                                        )
-                                    else:
-                                        if edit_provider_text_key not in st.session_state:
-                                            st.session_state[edit_provider_text_key] = provider_default
-                                        edit_provider_code = st.text_input(
-                                            label("provider_code"),
-                                            key=edit_provider_text_key,
-                                        ).strip().lower()
-
-                                with st.form(f"rule_edit_dialog_form_{dialog_rule_id}"):
-                                    st.markdown(f"**{label('deg_match_conditions')}**")
-                                    edit_regexp = st.text_input(
-                                        label("regexp_label"),
-                                        value=regexp_default,
-                                        help=t("regexp_help"),
+                                if (
+                                    edit_json_key not in st.session_state
+                                    or not str(st.session_state.get(edit_json_key, "")).strip()
+                                ):
+                                    st.session_state[edit_json_key] = json.dumps(
+                                        default_payload,
+                                        ensure_ascii=False,
+                                        indent=2,
                                     )
 
-                                    edit_col1, edit_col2 = st.columns(2)
-                                    with edit_col1:
-                                        edit_peer = st.text_input(
-                                            label("peer"),
-                                            value=peer_default,
-                                            help=t("keywords_help"),
-                                        )
-                                        edit_category = st.text_input(
-                                            label("category"),
-                                            value=category_default,
-                                            help=t("keywords_help"),
-                                        )
-                                    with edit_col2:
-                                        edit_item = st.text_input(
-                                            label("item_rule"),
-                                            value=item_default,
-                                            help=t("keywords_help"),
-                                        )
-                                        edit_tx_type = st.text_input(
-                                            label("transaction_type_label"),
-                                            value=tx_type_default,
-                                            help=t("optional"),
-                                        )
-
-                                    edit_extra_field = existing_extra_key
-                                    edit_extra_value = existing_extra_value
-                                    if edit_scope == "provider":
-                                        field_options = provider_field_map.get(edit_provider_code, [])
-                                        if existing_extra_key and existing_extra_key not in field_options:
-                                            field_options = field_options + [existing_extra_key]
-                                        field_options = field_options + ["custom"]
-                                        default_field_index = (
-                                            field_options.index(existing_extra_key)
-                                            if existing_extra_key in field_options else len(field_options) - 1
-                                        )
-                                        selected_extra_field = st.selectbox(
-                                            label("provider_field"),
-                                            field_options,
-                                            index=default_field_index,
-                                        )
-                                        if selected_extra_field == "custom":
-                                            edit_extra_field = st.text_input(
-                                                label("custom_field_key"),
-                                                value=existing_extra_key,
-                                            ).strip()
-                                        else:
-                                            edit_extra_field = selected_extra_field
-                                        edit_extra_value = st.text_input(
-                                            label("provider_field_value"),
-                                            value=existing_extra_value,
-                                            help=t("keywords_help"),
-                                        )
-                                    else:
-                                        edit_extra_field = ""
-                                        edit_extra_value = ""
-
-                                    edit_account = st.text_input(
-                                        label("target_account"),
-                                        value=str(dialog_rule.get("account", "")),
-                                    )
-                                    edit_confidence = st.slider(
-                                        label("confidence"),
-                                        min_value=0.0,
-                                        max_value=1.0,
-                                        value=float(dialog_rule.get("confidence", 1.0)),
-                                        step=0.05,
-                                    )
-                                    edit_source = st.selectbox(
-                                        label("source"),
-                                        ["user", "auto"],
-                                        index=0 if str(dialog_rule.get("source", "user")) == "user" else 1,
-                                    )
-
-                                    save_col, cancel_col = st.columns(2)
-                                    with save_col:
-                                        save_edit = st.form_submit_button(
-                                            label("save_rule_changes"),
-                                            type="primary",
-                                            width="stretch",
-                                        )
-                                    with cancel_col:
-                                        cancel_edit = st.form_submit_button(
-                                            label("cancel_edit_rule"),
-                                            width="stretch",
-                                        )
-
-                                if cancel_edit:
-                                    st.session_state.pop("rule_edit_dialog_id", None)
+                                def _clear_edit_session_state():
+                                    _clear_rule_edit_state()
                                     st.session_state.pop(edit_scope_key, None)
                                     st.session_state.pop(edit_provider_key, None)
                                     st.session_state.pop(edit_provider_text_key, None)
-                                    st.rerun()
+                                    st.session_state.pop(edit_json_key, None)
 
-                                if save_edit:
-                                    new_conditions = {
-                                        key: current_conditions.get(key)
-                                        for key in internal_preserve_keys
-                                        if key in current_conditions
-                                    }
-                                    if edit_scope == "provider" and edit_provider_code:
-                                        new_conditions["provider"] = edit_provider_code
-                                    if edit_regexp.strip():
-                                        new_conditions["regexp"] = edit_regexp.strip()
+                                def _save_rule(
+                                    target_account_value: str,
+                                    method_account_value: str,
+                                    source_value: str,
+                                    confidence_value: float,
+                                    new_conditions: dict,
+                                ):
+                                    if source_value not in {"user", "auto"}:
+                                        raise ValueError("`source` must be `user` or `auto`")
+                                    if not isinstance(new_conditions, dict):
+                                        raise ValueError("`conditions` must be an object")
 
-                                    edit_peer_tokens = _parse_keyword_list(edit_peer)
-                                    edit_item_tokens = _parse_keyword_list(edit_item)
-                                    edit_category_tokens = _parse_keyword_list(edit_category)
-                                    if edit_peer_tokens:
-                                        new_conditions["peer"] = edit_peer_tokens
-                                    if edit_item_tokens:
-                                        new_conditions["item"] = edit_item_tokens
-                                    if edit_category_tokens:
-                                        new_conditions["category"] = edit_category_tokens
-                                    if edit_tx_type.strip():
-                                        new_conditions[tx_type_key] = edit_tx_type.strip()
+                                    target_clean = str(target_account_value or "").strip()
+                                    method_clean = str(method_account_value or "").strip()
+                                    normalized_conditions = dict(new_conditions)
+                                    if method_clean:
+                                        normalized_conditions["methodAccount"] = method_clean
+                                    else:
+                                        normalized_conditions.pop("methodAccount", None)
 
-                                    if edit_extra_field and edit_extra_value.strip():
-                                        new_conditions[edit_extra_field] = _parse_keyword_list(edit_extra_value)
-
-                                    for key, value in preserved_extra_items.items():
-                                        if key not in new_conditions:
-                                            new_conditions[key] = value
+                                    if target_clean:
+                                        normalized_conditions.pop("_deg_only", None)
+                                        normalized_conditions.pop("_deg_has_target", None)
+                                    elif method_clean:
+                                        normalized_conditions["_deg_only"] = True
+                                        normalized_conditions["_deg_has_target"] = False
+                                    else:
+                                        raise ValueError("At least one of targetAccount or methodAccount is required")
 
                                     existing_name = str(dialog_rule.get("name", "")).strip()
                                     if not existing_name:
@@ -1419,28 +1395,314 @@ def render():
 
                                     payload = {
                                         "name": existing_name,
-                                        "account": edit_account.strip() or dialog_rule.get("account", ""),
-                                        "confidence": float(edit_confidence),
-                                        "source": edit_source,
-                                        "conditions": new_conditions,
+                                        "account": target_clean or method_clean,
+                                        "confidence": max(0.0, min(1.0, float(confidence_value))),
+                                        "source": source_value,
+                                        "conditions": normalized_conditions,
                                     }
-                                    try:
-                                        update_resp = requests.put(
-                                            get_api_url(f"/rules/{dialog_rule_id}"),
-                                            json=payload,
-                                            timeout=get_api_timeout(),
-                                        )
-                                        if update_resp.status_code == 200:
-                                            st.session_state.pop("rule_edit_dialog_id", None)
-                                            st.session_state.pop(edit_scope_key, None)
-                                            st.session_state.pop(edit_provider_key, None)
-                                            st.session_state.pop(edit_provider_text_key, None)
-                                            st.success(label("rule_updated"))
+
+                                    update_resp = requests.put(
+                                        get_api_url(f"/rules/{dialog_rule_id}"),
+                                        json=payload,
+                                        timeout=get_api_timeout(),
+                                    )
+                                    if update_resp.status_code == 200:
+                                        _clear_edit_session_state()
+                                        st.success(label("rule_updated"))
+                                        st.rerun()
+                                    else:
+                                        st.error(label("rule_update_failed", error=update_resp.text))
+
+                                tab_json, tab_form = st.tabs(
+                                    [label("rule_edit_mode_json"), label("rule_edit_mode_form")]
+                                )
+
+                                with tab_json:
+                                    st.caption(label("rule_edit_json_help"))
+                                    reload_json_col, _ = st.columns([1.4, 4.6])
+                                    with reload_json_col:
+                                        if st.button(
+                                            label("rule_reload_json_from_current"),
+                                            key=f"rule_reload_json_btn_{dialog_rule_id}",
+                                            width="stretch",
+                                        ):
+                                            st.session_state[edit_json_key] = json.dumps(
+                                                default_payload,
+                                                ensure_ascii=False,
+                                                indent=2,
+                                            )
                                             st.rerun()
-                                        else:
-                                            st.error(label("rule_update_failed", error=update_resp.text))
-                                    except Exception as e:
-                                        st.error(label("rule_update_failed", error=str(e)))
+                                    with st.form(f"rule_edit_dialog_form_json_{dialog_rule_id}"):
+                                        edit_payload_text = st.text_area(
+                                            label("rule_payload_json"),
+                                            key=edit_json_key,
+                                            height=560,
+                                        )
+                                        json_save_col, json_cancel_col = st.columns(2)
+                                        with json_save_col:
+                                            json_save = st.form_submit_button(
+                                                label("save_rule_changes"),
+                                                type="primary",
+                                                width="stretch",
+                                            )
+                                        with json_cancel_col:
+                                            json_cancel = st.form_submit_button(
+                                                label("cancel_edit_rule"),
+                                                width="stretch",
+                                            )
+
+                                    if json_cancel:
+                                        _clear_edit_session_state()
+                                        st.rerun()
+
+                                    if json_save:
+                                        try:
+                                            parsed_payload = json.loads(edit_payload_text)
+                                            if not isinstance(parsed_payload, dict):
+                                                raise ValueError("JSON root must be an object")
+
+                                            if "conditions" in parsed_payload:
+                                                new_conditions = parsed_payload.get("conditions", {})
+                                                target_account_value = str(
+                                                    parsed_payload.get(
+                                                        "targetAccount",
+                                                        parsed_payload.get("account", target_default),
+                                                    )
+                                                ).strip()
+                                                method_account_value = str(
+                                                    parsed_payload.get(
+                                                        "methodAccount",
+                                                        method_default,
+                                                    )
+                                                ).strip()
+                                                source_value = str(
+                                                    parsed_payload.get("source", dialog_rule.get("source", "user"))
+                                                ).strip().lower()
+                                                confidence_raw = parsed_payload.get(
+                                                    "confidence", dialog_rule.get("confidence", 1.0)
+                                                )
+                                            else:
+                                                new_conditions = parsed_payload
+                                                target_account_value = target_default
+                                                method_account_value = method_default
+                                                source_value = str(dialog_rule.get("source", "user")).strip().lower()
+                                                confidence_raw = dialog_rule.get("confidence", 1.0)
+
+                                            try:
+                                                confidence_value = float(confidence_raw)
+                                            except (TypeError, ValueError) as exc:
+                                                raise ValueError("`confidence` must be a number") from exc
+
+                                            _save_rule(
+                                                target_account_value=target_account_value,
+                                                method_account_value=method_account_value,
+                                                source_value=source_value,
+                                                confidence_value=confidence_value,
+                                                new_conditions=new_conditions,
+                                            )
+                                        except json.JSONDecodeError as e:
+                                            st.error(label("rule_invalid_conditions_json", error=str(e)))
+                                        except ValueError as e:
+                                            st.error(label("rule_invalid_rule_payload", error=str(e)))
+                                        except Exception as e:
+                                            st.error(label("rule_update_failed", error=str(e)))
+
+                                with tab_form:
+                                    with st.form(f"rule_edit_dialog_form_compact_{dialog_rule_id}"):
+                                        top_col1, top_col2, top_col3 = st.columns(3)
+                                        with top_col1:
+                                            edit_scope = st.selectbox(
+                                                label("rule_scope"),
+                                                ["global", "provider"],
+                                                key=edit_scope_key,
+                                                format_func=lambda x: (
+                                                    label("scope_global")
+                                                    if x == "global" else label("scope_provider_specific")
+                                                ),
+                                            )
+                                        with top_col2:
+                                            edit_provider_code = ""
+                                            if edit_scope == "provider":
+                                                provider_codes = [code for code, _ in provider_options if code]
+                                                if provider_codes:
+                                                    if (
+                                                        edit_provider_key not in st.session_state
+                                                        or st.session_state[edit_provider_key] not in provider_codes
+                                                    ):
+                                                        st.session_state[edit_provider_key] = (
+                                                            provider_default
+                                                            if provider_default in provider_codes
+                                                            else provider_codes[0]
+                                                        )
+                                                    edit_provider_code = st.selectbox(
+                                                        label("provider_code"),
+                                                        provider_codes,
+                                                        key=edit_provider_key,
+                                                        format_func=lambda x: next(
+                                                            (n for c, n in provider_options if c == x),
+                                                            x,
+                                                        ),
+                                                    )
+                                                else:
+                                                    if edit_provider_text_key not in st.session_state:
+                                                        st.session_state[edit_provider_text_key] = provider_default
+                                                    edit_provider_code = st.text_input(
+                                                        label("provider_code"),
+                                                        key=edit_provider_text_key,
+                                                    ).strip().lower()
+                                            else:
+                                                st.caption(label("scope_global"))
+                                        with top_col3:
+                                            edit_source = st.selectbox(
+                                                label("source"),
+                                                ["user", "auto"],
+                                                index=0 if str(dialog_rule.get("source", "user")) == "user" else 1,
+                                            )
+
+                                        row2_col1, row2_col2, row2_col3, row2_col4 = st.columns(4)
+                                        with row2_col1:
+                                            edit_target_account = st.text_input(
+                                                label("target_account"),
+                                                value=target_default,
+                                            )
+                                        with row2_col2:
+                                            edit_method_account = st.text_input(
+                                                label("method_account"),
+                                                value=method_default,
+                                            )
+                                        with row2_col3:
+                                            edit_confidence = st.number_input(
+                                                label("confidence"),
+                                                min_value=0.0,
+                                                max_value=1.0,
+                                                value=float(dialog_rule.get("confidence", 1.0)),
+                                                step=0.05,
+                                            )
+                                        with row2_col4:
+                                            edit_regexp = st.text_input(
+                                                label("regexp_label"),
+                                                value=regexp_default,
+                                                help=t("regexp_help"),
+                                            )
+
+                                        row3_col1, row3_col2, row3_col3 = st.columns(3)
+                                        with row3_col1:
+                                            edit_peer = st.text_input(
+                                                label("peer"),
+                                                value=peer_default,
+                                                help=t("keywords_help"),
+                                            )
+                                        with row3_col2:
+                                            edit_item = st.text_input(
+                                                label("item_rule"),
+                                                value=item_default,
+                                                help=t("keywords_help"),
+                                            )
+                                        with row3_col3:
+                                            edit_category = st.text_input(
+                                                label("category"),
+                                                value=category_default,
+                                                help=t("keywords_help"),
+                                            )
+
+                                        row4_col1, row4_col2, row4_col3 = st.columns(3)
+                                        with row4_col1:
+                                            edit_tx_type = st.text_input(
+                                                label("transaction_type_label"),
+                                                value=tx_type_default,
+                                                help=t("optional"),
+                                            )
+                                        with row4_col2:
+                                            edit_extra_field = ""
+                                            if edit_scope == "provider":
+                                                field_options = provider_field_map.get(edit_provider_code, [])
+                                                if existing_extra_key and existing_extra_key not in field_options:
+                                                    field_options = field_options + [existing_extra_key]
+                                                field_options = field_options + ["custom"]
+                                                default_field_index = (
+                                                    field_options.index(existing_extra_key)
+                                                    if existing_extra_key in field_options else len(field_options) - 1
+                                                )
+                                                selected_extra_field = st.selectbox(
+                                                    label("provider_field"),
+                                                    field_options,
+                                                    index=default_field_index,
+                                                )
+                                                if selected_extra_field == "custom":
+                                                    edit_extra_field = st.text_input(
+                                                        label("custom_field_key"),
+                                                        value=existing_extra_key,
+                                                    ).strip()
+                                                else:
+                                                    edit_extra_field = selected_extra_field
+                                            else:
+                                                st.caption(label("optional"))
+                                        with row4_col3:
+                                            edit_extra_value = ""
+                                            if edit_scope == "provider":
+                                                edit_extra_value = st.text_input(
+                                                    label("provider_field_value"),
+                                                    value=existing_extra_value,
+                                                    help=t("keywords_help"),
+                                                )
+
+                                        form_save_col, form_cancel_col = st.columns(2)
+                                        with form_save_col:
+                                            form_save = st.form_submit_button(
+                                                label("save_rule_changes"),
+                                                type="primary",
+                                                width="stretch",
+                                            )
+                                        with form_cancel_col:
+                                            form_cancel = st.form_submit_button(
+                                                label("cancel_edit_rule"),
+                                                width="stretch",
+                                            )
+
+                                    if form_cancel:
+                                        _clear_edit_session_state()
+                                        st.rerun()
+
+                                    if form_save:
+                                        try:
+                                            new_conditions = {
+                                                key: current_conditions.get(key)
+                                                for key in internal_preserve_keys
+                                                if key in current_conditions
+                                            }
+                                            if edit_scope == "provider" and edit_provider_code:
+                                                new_conditions["provider"] = edit_provider_code
+                                            if edit_regexp.strip():
+                                                new_conditions["regexp"] = edit_regexp.strip()
+
+                                            edit_peer_tokens = _parse_keyword_list(edit_peer)
+                                            edit_item_tokens = _parse_keyword_list(edit_item)
+                                            edit_category_tokens = _parse_keyword_list(edit_category)
+                                            if edit_peer_tokens:
+                                                new_conditions["peer"] = edit_peer_tokens
+                                            if edit_item_tokens:
+                                                new_conditions["item"] = edit_item_tokens
+                                            if edit_category_tokens:
+                                                new_conditions["category"] = edit_category_tokens
+                                            if edit_tx_type.strip():
+                                                new_conditions[tx_type_key] = edit_tx_type.strip()
+                                            if edit_extra_field and edit_extra_value.strip():
+                                                new_conditions[edit_extra_field] = _parse_keyword_list(edit_extra_value)
+                                            for key, value in preserved_extra_items.items():
+                                                if key not in new_conditions:
+                                                    new_conditions[key] = value
+
+                                            _save_rule(
+                                                target_account_value=edit_target_account.strip(),
+                                                method_account_value=edit_method_account.strip(),
+                                                source_value=str(edit_source or dialog_rule.get("source", "user")).strip().lower(),
+                                                confidence_value=float(edit_confidence),
+                                                new_conditions=new_conditions,
+                                            )
+                                        except ValueError as e:
+                                            st.error(label("rule_invalid_rule_payload", error=str(e)))
+                                        except Exception as e:
+                                            st.error(label("rule_update_failed", error=str(e)))
 
                             _render_rule_edit_dialog()
                         else:
@@ -1450,7 +1712,10 @@ def render():
                     if delete_rule_id and delete_rule_id in rule_index:
                         delete_rule_name = str(rule_index[delete_rule_id].get("name", delete_rule_id))
                         if hasattr(st, "dialog"):
-                            @st.dialog(label("rule_delete_confirm_title"))
+                            @st.dialog(
+                                label("rule_delete_confirm_title"),
+                                on_dismiss=lambda: st.session_state.pop("rule_delete_confirm_id", None),
+                            )
                             def _render_delete_confirm_dialog():
                                 st.warning(label("rule_delete_confirm_text", name=delete_rule_name))
                                 confirm_col, cancel_col = st.columns(2)
@@ -1636,7 +1901,11 @@ def render():
                             extra_field = st.text_input(label("custom_field_key")).strip()
                         extra_value = st.text_input(label("provider_field_value"), help=t("keywords_help"))
 
-                    account = st.text_input(label("target_account"))
+                    account_col1, account_col2 = st.columns(2)
+                    with account_col1:
+                        account = st.text_input(label("target_account"))
+                    with account_col2:
+                        method_account = st.text_input(label("method_account"))
                     confidence = st.slider(
                         label("confidence"),
                         min_value=0.0,
@@ -1685,11 +1954,25 @@ def render():
                         conditions["transactionType"] = tx_type.strip()
                     if extra_field and extra_value.strip():
                         conditions[extra_field] = _parse_keyword_list(extra_value)
+                    if method_account.strip():
+                        conditions["methodAccount"] = method_account.strip()
+
+                    account_value = account.strip()
+                    method_value = method_account.strip()
+                    if account_value:
+                        conditions.pop("_deg_only", None)
+                        conditions.pop("_deg_has_target", None)
+                    elif method_value:
+                        conditions["_deg_only"] = True
+                        conditions["_deg_has_target"] = False
+                    else:
+                        st.error(label("rule_target_or_method_required"))
+                        return
 
                     payload = {
                         "name": f"rule-{uuid.uuid4().hex[:8]}",
                         "conditions": conditions,
-                        "account": account.strip(),
+                        "account": account_value or method_value,
                         "confidence": float(confidence),
                         "source": "user",
                     }
@@ -1733,6 +2016,7 @@ def render():
         with io_col2:
             st.markdown("<div style='height: 1.75rem;'></div>", unsafe_allow_html=True)
             if st.button(label("deg_yaml_import_open_modal"), type="primary", width="stretch"):
+                _clear_ai_dialog_state()
                 st.session_state.rule_import_dialog_open = True
                 st.session_state.rule_import_dialog_provider = io_provider
                 st.rerun()

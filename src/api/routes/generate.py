@@ -2,6 +2,7 @@
 
 import json
 from typing import Dict, Any
+import yaml
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -165,6 +166,95 @@ def _create_deg(db: Session | None = None) -> DoubleEntryGenerator:
     )
 
 
+def _normalize_provider_key(config: dict, provider: str) -> str:
+    """Find exact provider key in YAML config by case-insensitive match."""
+    normalized = str(provider or "").strip().lower()
+    for key in config.keys():
+        if str(key).strip().lower() == normalized:
+            return str(key)
+    return normalized
+
+
+def _build_session_deg_rules(transactions: list[dict]) -> list[dict]:
+    """
+    Build high-priority temporary DEG rules from current classification table.
+
+    These rules make generation follow user-confirmed classification results
+    (`targetAccount` / `methodAccount`) even before persisting to long-term rules.
+    """
+    rules: list[dict] = []
+    for idx, tx in enumerate(transactions or [], start=1):
+        if not isinstance(tx, dict):
+            continue
+        target_account = str(tx.get("targetAccount") or tx.get("account") or "").strip()
+        if not target_account:
+            continue
+
+        entry: dict[str, Any] = {
+            "description": f"session-tx-{idx:04d}",
+            "targetAccount": target_account,
+        }
+
+        method_account = str(tx.get("methodAccount", "")).strip()
+        if method_account:
+            entry["methodAccount"] = method_account
+
+        for key in ("peer", "item", "category", "type", "status", "method", "txType", "transactionType"):
+            value = str(tx.get(key, "")).strip()
+            if value:
+                entry[key] = value
+
+        # Keep matching explicit enough; skip rules with no conditions.
+        has_match_condition = any(
+            k in entry
+            for k in ("peer", "item", "category", "type", "status", "method", "txType", "transactionType")
+        )
+        if not has_match_condition:
+            continue
+
+        rules.append(entry)
+    return rules
+
+
+def _account_issue(account: Any) -> str:
+    """Return account issue type: empty | other | ''."""
+    text = str(account or "").strip()
+    if not text or text == "/":
+        return "empty"
+    leaf = text.split(":")[-1].strip().lower()
+    if leaf == "other":
+        return "other"
+    return ""
+
+
+def _validate_required_accounts(transactions: list[dict]) -> list[dict[str, Any]]:
+    """Validate targetAccount/methodAccount for generation request."""
+    issues: list[dict[str, Any]] = []
+    for idx, tx in enumerate(transactions or [], start=1):
+        if not isinstance(tx, dict):
+            continue
+        target = str(tx.get("targetAccount") or tx.get("account") or "").strip()
+        method = str(tx.get("methodAccount") or "").strip()
+        entry_issues: dict[str, str] = {}
+        target_issue = _account_issue(target)
+        method_issue = _account_issue(method)
+        if target_issue:
+            entry_issues["targetAccount"] = target_issue
+        if method_issue:
+            entry_issues["methodAccount"] = method_issue
+        if entry_issues:
+            issues.append(
+                {
+                    "row": idx,
+                    "id": str(tx.get("id", "")).strip(),
+                    "peer": str(tx.get("peer", "")).strip(),
+                    "item": str(tx.get("item", "")).strip(),
+                    "issues": entry_issues,
+                }
+            )
+    return issues
+
+
 @router.post("/generate", response_model=GenerateResponse)
 async def generate_beancount(
     request: GenerateRequest,
@@ -181,10 +271,45 @@ async def generate_beancount(
         Generation result
     """
     try:
+        invalid_rows = _validate_required_accounts(request.transactions)
+        if invalid_rows:
+            preview_items = []
+            for row in invalid_rows[:8]:
+                issue_text = ",".join(f"{k}={v}" for k, v in row["issues"].items())
+                ref = row["id"] or f"row-{row['row']}"
+                preview_items.append(f"{ref}({issue_text})")
+            suffix = " ..." if len(invalid_rows) > 8 else ""
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Target Account and Method Account cannot be empty or Other. "
+                    f"Invalid rows: {len(invalid_rows)} [{'; '.join(preview_items)}{suffix}]"
+                ),
+            )
+
         # Create DEG integrator
         deg = _create_deg(db)
         rule_engine = RuleEngine(db)
         deg_config_yaml = rule_engine.export_deg_yaml(provider=request.provider)
+        session_rules = _build_session_deg_rules(request.transactions)
+        if session_rules:
+            try:
+                config_obj = yaml.safe_load(deg_config_yaml) or {}
+                if isinstance(config_obj, dict):
+                    provider_key = _normalize_provider_key(config_obj, request.provider or "alipay")
+                    provider_block = config_obj.get(provider_key)
+                    if not isinstance(provider_block, dict):
+                        provider_block = {}
+                    existing_rules = provider_block.get("rules", [])
+                    if not isinstance(existing_rules, list):
+                        existing_rules = []
+                    # Put session rules first to override fallback/legacy mappings.
+                    provider_block["rules"] = session_rules + existing_rules
+                    config_obj[provider_key] = provider_block
+                    deg_config_yaml = yaml.safe_dump(config_obj, allow_unicode=True, sort_keys=False)
+            except Exception:
+                # Keep original config on YAML merge failure.
+                pass
 
         # Generate Beancount file
         result = deg.generate_beancount_from_transactions(
@@ -199,6 +324,8 @@ async def generate_beancount(
             message=result.get("message", ""),
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
 

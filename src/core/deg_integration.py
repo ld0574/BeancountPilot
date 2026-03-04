@@ -187,9 +187,10 @@ class DoubleEntryGenerator:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
 
+            provider = self._normalize_provider(provider)
+
             # Write CSV file
             csv_file = temp_path / "transactions.csv"
-            self._write_csv(csv_file, transactions, provider)
 
             # Write configuration file
             config_file = temp_path / "config.yaml"
@@ -203,19 +204,67 @@ class DoubleEntryGenerator:
             # Output file
             output_file = temp_path / "output.beancount"
 
-            # Call DEG
-            return self.call_double_entry_generator(
-                csv_file, config_file, output_file, provider
-            )
+            # Call DEG with encoding fallback.
+            # Alipay/WeChat/bank-style exports are commonly GB18030-encoded.
+            encodings_to_try = self._csv_encodings_for_provider(provider)
+            last_result: Dict[str, Any] = {
+                "success": False,
+                "message": "Generation failed before DEG execution",
+            }
+
+            for csv_encoding in encodings_to_try:
+                self._write_csv(csv_file, transactions, provider, encoding=csv_encoding)
+                if output_file.exists():
+                    output_file.unlink()
+
+                last_result = self.call_double_entry_generator(
+                    csv_file, config_file, output_file, provider
+                )
+                if last_result.get("success"):
+                    return last_result
+
+            attempted = ", ".join(encodings_to_try)
+            return {
+                **last_result,
+                "message": (
+                    f"{last_result.get('message', 'Generation failed')} "
+                    f"(tried CSV encodings: {attempted})"
+                ).strip(),
+            }
+
+    def _csv_encodings_for_provider(self, provider: str) -> list[str]:
+        """Return encoding candidates for provider-specific CSV compatibility."""
+        provider = self._normalize_provider(provider)
+        if provider in {"alipay", "wechat"} or provider in self.bank_style_providers:
+            return ["gb18030", "utf-8-sig", "utf-8"]
+        return ["utf-8-sig", "utf-8", "gb18030"]
 
     def _write_csv(
-        self, csv_file: Path, transactions: list[Dict[str, Any]], provider: str
+        self,
+        csv_file: Path,
+        transactions: list[Dict[str, Any]],
+        provider: str,
+        encoding: str = "utf-8",
     ) -> None:
         """Write CSV file"""
         # Determine CSV format based on provider
         provider = self._normalize_provider(provider)
         if provider == "alipay":
-            fieldnames = ["交易时间", "商品说明", "收/支", "金额", "交易对方", "交易状态"]
+            # Match official Alipay export column order to keep DEG parser compatible.
+            fieldnames = [
+                "交易时间",
+                "交易分类",
+                "交易对方",
+                "对方账号",
+                "商品说明",
+                "收/支",
+                "金额",
+                "收/付款方式",
+                "交易状态",
+                "交易订单号",
+                "商家订单号",
+                "备注",
+            ]
         elif provider == "wechat":
             fieldnames = ["交易时间", "商品", "收/支", "金额(元)", "交易类型", "交易对方", "当前状态"]
         elif provider in self.bank_style_providers:
@@ -224,7 +273,7 @@ class DoubleEntryGenerator:
             # 通用格式
             fieldnames = ["time", "item", "type", "amount", "peer", "status"]
 
-        with open(csv_file, "w", encoding="utf-8", newline="") as f:
+        with open(csv_file, "w", encoding=encoding, newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
 
@@ -234,6 +283,8 @@ class DoubleEntryGenerator:
                     # Map field names
                     if field == "交易时间" or field == "time":
                         row[field] = tx.get("time", "")
+                    elif field == "交易分类":
+                        row[field] = tx.get("category", "") or tx.get("item", "")
                     elif field == "商品说明" or field == "商品" or field == "item":
                         row[field] = tx.get("item", "")
                     elif field == "收/支" or field == "type":
@@ -244,6 +295,16 @@ class DoubleEntryGenerator:
                         row[field] = tx.get("peer", "")
                     elif field == "交易状态" or field == "当前状态" or field == "status":
                         row[field] = tx.get("status", "交易成功")
+                    elif field == "对方账号":
+                        row[field] = tx.get("peer_account", "/") or "/"
+                    elif field == "收/付款方式":
+                        row[field] = tx.get("method", "")
+                    elif field == "交易订单号":
+                        row[field] = tx.get("transaction_id", "") or tx.get("order_id", "")
+                    elif field == "商家订单号":
+                        row[field] = tx.get("merchant_order_id", "")
+                    elif field == "备注":
+                        row[field] = tx.get("note", "")
                     elif field == "交易日期":
                         row[field] = tx.get("time", "")
                     elif field == "摘要":

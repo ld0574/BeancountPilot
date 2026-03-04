@@ -57,6 +57,8 @@ class ClassificationResult(BaseModel):
 
     transaction_id: str
     account: str
+    targetAccount: Optional[str] = None
+    methodAccount: Optional[str] = None
     confidence: float
     reasoning: str
     source: str
