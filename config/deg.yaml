@@ -1,0 +1,40 @@
+# DEG provider catalog
+#
+# Official providers are read-only in Settings UI and loaded from this file.
+# You can still add non-official providers in Settings -> DEG Mapping.
+
+official_providers:
+  - code: alipay
+    i18n_key: deg_provider_alipay
+  - code: wechat
+    i18n_key: deg_provider_wechat
+  - code: ccb
+    i18n_key: deg_provider_ccb
+  - code: icbc
+    i18n_key: deg_provider_icbc
+  - code: citic
+    i18n_key: deg_provider_citic
+  - code: hsbchk
+    i18n_key: deg_provider_hsbchk
+  - code: bmo
+    i18n_key: deg_provider_bmo
+  - code: td
+    i18n_key: deg_provider_td
+  - code: cmb
+    i18n_key: deg_provider_cmb
+  - code: bocom_debit
+    i18n_key: deg_provider_bocom_debit
+  - code: bocom_credit
+    i18n_key: deg_provider_bocom_credit
+  - code: abc_debit
+    i18n_key: deg_provider_abc_debit
+  - code: htsec
+    i18n_key: deg_provider_htsec
+  - code: hxsec
+    i18n_key: deg_provider_hxsec
+  - code: jd
+    i18n_key: deg_provider_jd
+  - code: mt
+    i18n_key: deg_provider_mt
+  - code: huobi
+    i18n_key: deg_provider_huobi

@@ -123,7 +123,20 @@ This keeps `Chart of Accounts` and the five ledger template files synchronized:
 
 ### 2. Upload Transaction Files
 
-Support CSV files exported from platforms like Alipay, WeChat, etc.
+Supports `CSV/XLS/XLSX` files exported from platforms such as Alipay, WeChat, and CCB.
+
+DEG provider invocation now follows official CLI semantics (`translate -p <provider> -t beancount`), for example:
+
+```bash
+double-entry-generator translate -p ccb -t beancount ccb_records.xls
+double-entry-generator translate -p alipay -t beancount alipay_records.csv
+```
+
+If your input source name differs from DEG provider codes, configure aliases in `Settings -> DEG Mapping`:
+
+1. Official provider catalog is loaded from `config/deg.yaml` (read-only in UI), and display names use `i18n_key` from frontend locale files.
+2. Map your source labels to official target codes whenever possible.
+3. If you map to a non-official target code, conversion may fail unless your DEG binary/custom parser supports it.
 
 ### 3. AI Classification
 

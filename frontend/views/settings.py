@@ -3,6 +3,7 @@ Settings page
 """
 
 import sys
+import uuid
 from pathlib import Path
 
 import streamlit as st
@@ -13,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from frontend.i18n import init_i18n, t, label
+from frontend.i18n import init_i18n, t, label, get_current_language
 from frontend.config import get_api_url, get_health_check_url, get_api_timeout
 from src.db.init import DEFAULT_LEDGER_FILES
 
@@ -26,9 +27,9 @@ LEDGER_FILES = [
     "liabilities.bean",
 ]
 
-AI_PROVIDER_ORDER = ["deepseek", "openai", "ollama", "custom"]
+AI_PROVIDER_TYPES = ["deepseek", "openai", "ollama", "custom"]
 
-DEFAULT_AI_PROVIDER_CONFIG = {
+DEFAULT_AI_PROFILE_TEMPLATE = {
     "deepseek": {
         "api_base": "https://api.deepseek.com/v1",
         "api_key": "",
@@ -65,43 +66,102 @@ def _get_ledger_data_dir() -> Path:
     return Path.home() / ".beancountpilot" / "data"
 
 
-def _normalize_ai_providers(providers: dict | None) -> dict:
-    """Normalize provider config map for UI editing."""
-    normalized = {}
-    providers = providers or {}
-    for name in AI_PROVIDER_ORDER:
-        defaults = DEFAULT_AI_PROVIDER_CONFIG[name]
-        current = providers.get(name, {})
-        normalized[name] = {
-            "api_base": str(current.get("api_base", defaults["api_base"])),
-            "api_key": str(current.get("api_key", defaults["api_key"])),
-            "model": str(current.get("model", defaults["model"])),
-            "temperature": float(current.get("temperature", defaults["temperature"])),
-            "timeout": int(current.get("timeout", defaults["timeout"])),
+def _provider_label(provider: str) -> str:
+    labels = {
+        "deepseek": "DeepSeek",
+        "openai": "OpenAI",
+        "ollama": "Ollama",
+        "custom": "Custom",
+    }
+    return labels.get(provider, provider)
+
+
+def _build_profile(provider: str, name: str = "", profile_id: str = "") -> dict:
+    """Build a default profile structure."""
+    provider = provider if provider in AI_PROVIDER_TYPES else "custom"
+    defaults = DEFAULT_AI_PROFILE_TEMPLATE[provider]
+    return {
+        "id": profile_id.strip() or f"profile-{uuid.uuid4().hex[:8]}",
+        "name": name.strip() or f"{_provider_label(provider)} Profile",
+        "provider": provider,
+        "api_base": defaults["api_base"],
+        "api_key": defaults["api_key"],
+        "model": defaults["model"],
+        "temperature": defaults["temperature"],
+        "timeout": defaults["timeout"],
+    }
+
+
+def _normalize_ai_profiles(raw_profiles: list[dict] | None) -> list[dict]:
+    """Normalize profile list for UI editing."""
+    profiles = []
+    raw_profiles = raw_profiles or []
+    seen_ids = set()
+
+    for raw in raw_profiles:
+        provider = str(raw.get("provider", "deepseek")).lower()
+        if provider not in AI_PROVIDER_TYPES:
+            provider = "custom"
+
+        defaults = DEFAULT_AI_PROFILE_TEMPLATE[provider]
+
+        profile_id = str(raw.get("id", "")).strip()
+        if not profile_id or profile_id in seen_ids:
+            profile_id = f"profile-{uuid.uuid4().hex[:8]}"
+        seen_ids.add(profile_id)
+
+        profile = {
+            "id": profile_id,
+            "name": str(raw.get("name", "")).strip() or f"{_provider_label(provider)} Profile",
+            "provider": provider,
+            "api_base": str(raw.get("api_base", defaults["api_base"])),
+            "api_key": str(raw.get("api_key", defaults["api_key"])),
+            "model": str(raw.get("model", defaults["model"])),
+            "temperature": float(raw.get("temperature", defaults["temperature"])),
+            "timeout": int(raw.get("timeout", defaults["timeout"])),
         }
-    return normalized
+        profiles.append(profile)
+
+    if not profiles:
+        profiles.append(_build_profile("deepseek", "DeepSeek Profile", "deepseek-default"))
+
+    return profiles
 
 
-def _load_ai_config() -> tuple[str, dict]:
+def _resolve_default_profile_id(profiles: list[dict], ref: str) -> str:
+    """Resolve active profile id."""
+    if not profiles:
+        return ""
+    ids = [p["id"] for p in profiles]
+    if ref in ids:
+        return ref
+    if ref in AI_PROVIDER_TYPES:
+        for profile in profiles:
+            if profile["provider"] == ref:
+                return profile["id"]
+    return profiles[0]["id"]
+
+
+def _load_ai_config() -> tuple[str, list[dict]]:
     """Load AI config from backend; fallback to defaults on failure."""
-    default_provider = "deepseek"
-    providers = _normalize_ai_providers(None)
+    fallback_profiles = _normalize_ai_profiles([])
+    fallback_default = fallback_profiles[0]["id"]
+
     try:
         timeout = min(get_api_timeout(), 3)
         response = requests.get(get_api_url("/ai/config"), timeout=timeout)
         if response.status_code != 200:
-            return default_provider, providers
+            return fallback_default, fallback_profiles
 
         data = response.json()
-        default_provider = data.get("default_provider", default_provider)
-        providers = _normalize_ai_providers(data.get("providers"))
-
-        if default_provider not in AI_PROVIDER_ORDER:
-            default_provider = "deepseek"
+        profiles = _normalize_ai_profiles(data.get("profiles"))
+        default_profile_id = _resolve_default_profile_id(
+            profiles,
+            str(data.get("default_profile_id") or data.get("default_provider") or ""),
+        )
+        return default_profile_id, profiles
     except Exception:
-        return default_provider, providers
-
-    return default_provider, providers
+        return fallback_default, fallback_profiles
 
 
 def _decode_uploaded_file(content: bytes) -> str:
@@ -112,6 +172,91 @@ def _decode_uploaded_file(content: bytes) -> str:
         except UnicodeDecodeError:
             continue
     raise ValueError("Unsupported file encoding. Please upload UTF-8 or GBK text.")
+
+
+def _render_deg_mapping_text(mappings: dict[str, str]) -> str:
+    """Render provider mapping as editable lines."""
+    if not mappings:
+        return ""
+    lines = [f"{k}={v}" for k, v in sorted(mappings.items(), key=lambda x: x[0])]
+    return "\n".join(lines)
+
+
+def _parse_deg_mapping_text(text: str) -> dict[str, str]:
+    """
+    Parse mapping text lines:
+    source=provider
+    source->provider
+    source:provider
+    """
+    mapping = {}
+    for idx, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        delimiter = None
+        for candidate in ("->", "=", ":"):
+            if candidate in line:
+                delimiter = candidate
+                break
+
+        if delimiter is None:
+            raise ValueError(f"Line {idx}: expected one of '->', '=', ':'")
+
+        src, target = line.split(delimiter, 1)
+        src = src.strip().lower()
+        target = target.strip().lower()
+        if not src or not target:
+            raise ValueError(f"Line {idx}: source and target cannot be empty")
+        mapping[src] = target
+
+    return mapping
+
+
+def _normalize_custom_provider_rows(raw_items: list[dict] | None) -> list[dict]:
+    """Normalize custom provider rows for UI display/edit."""
+    rows = []
+    seen_codes = set()
+    for item in raw_items or []:
+        code = str(item.get("code", "")).strip().lower()
+        if not code or code in seen_codes:
+            continue
+        seen_codes.add(code)
+        rows.append(
+            {
+                "code": code,
+                "name_en": str(item.get("name_en", "")).strip(),
+                "name_zh": str(item.get("name_zh", "")).strip(),
+                "names": item.get("names", {}) if isinstance(item.get("names"), dict) else {},
+                "i18n_key": str(item.get("i18n_key", "")).strip(),
+            }
+        )
+    return sorted(rows, key=lambda x: x["code"])
+
+
+def _provider_display_name(item: dict, lang: str) -> str:
+    """Render provider name with i18n-key first, then names fallback."""
+    i18n_key = str(item.get("i18n_key", "")).strip()
+    if i18n_key:
+        localized = t(i18n_key)
+        if localized and localized != i18n_key:
+            return localized
+
+    names = item.get("names") or {}
+    if isinstance(names, dict):
+        lang_key = (lang or "en").lower()
+        base_key = lang_key.split("-", 1)[0]
+        for key in (lang_key, base_key, "en", "zh"):
+            value = names.get(key)
+            if value:
+                return str(value).strip()
+
+    name_en = str(item.get("name_en", "")).strip()
+    name_zh = str(item.get("name_zh", "")).strip()
+    if lang.startswith("zh"):
+        return name_zh or name_en or str(item.get("code", ""))
+    return name_en or name_zh or str(item.get("code", ""))
 
 
 def _parse_chart_accounts(chart_of_accounts: str) -> list[str]:
@@ -216,12 +361,13 @@ def render():
     )
 
     # Tabs
-    tab1, tab2, tab3, tab4 = st.tabs(
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
         [
             label("ai_settings"),
             label("chart_of_accounts_config"),
             label("rule_management"),
             label("system_info"),
+            label("deg_mapping_tab"),
         ]
     )
 
@@ -229,119 +375,65 @@ def render():
     with tab1:
         st.subheader(label("ai_provider_config"))
 
+        def _show_toast_warning(message: str) -> None:
+            """Show warning in toast when available; fallback to inline warning."""
+            if hasattr(st, "toast"):
+                st.toast(message, icon="⚠️")
+            else:
+                st.warning(message)
+
         if "ai_config_loaded" not in st.session_state:
-            default_provider, providers = _load_ai_config()
-            st.session_state.ai_providers = providers
-            st.session_state.provider = default_provider
+            default_profile_id, profiles = _load_ai_config()
+            st.session_state.ai_profiles = profiles
+            st.session_state.provider = default_profile_id
             st.session_state.ai_config_loaded = True
 
-        providers = _normalize_ai_providers(st.session_state.get("ai_providers"))
-        current_provider = st.session_state.get("provider", "deepseek")
-        if current_provider not in AI_PROVIDER_ORDER:
-            current_provider = "deepseek"
+        profiles = _normalize_ai_profiles(st.session_state.get("ai_profiles"))
+        current_profile_id = _resolve_default_profile_id(
+            profiles, str(st.session_state.get("provider", ""))
+        )
+        st.session_state.provider = current_profile_id
 
-        provider_name_map = {
-            "deepseek": "DeepSeek",
-            "openai": "OpenAI",
-            "ollama": "Ollama",
-            "custom": "Custom",
-        }
+        profile_options = [profile["id"] for profile in profiles]
+        profile_by_id = {profile["id"]: profile for profile in profiles}
 
-        with st.form("ai_provider_config_form"):
-            provider_index = AI_PROVIDER_ORDER.index(current_provider)
-            active_provider = st.selectbox(
-                label("active_ai_provider"),
-                AI_PROVIDER_ORDER,
-                index=provider_index,
-                format_func=lambda x: provider_name_map.get(x, x),
+        def format_profile(profile_id: str) -> str:
+            profile = profile_by_id[profile_id]
+            return f"{profile['name']} ({_provider_label(profile['provider'])})"
+
+        st.markdown("---")
+        st.subheader(label("add_profile"))
+        add_col1, add_col2, add_col3 = st.columns([1.6, 1.2, 0.8])
+        with add_col1:
+            new_profile_name = st.text_input(
+                label("profile_name"),
+                key="new_ai_profile_name",
+                placeholder=label("profile_name_placeholder"),
             )
-            st.caption(label("active_ai_provider_help"))
-
-            st.markdown("---")
-            st.subheader(label("multi_provider_config"))
-
-            edited_providers = {}
-
-            for provider_name in AI_PROVIDER_ORDER:
-                cfg = providers[provider_name]
-                title = f"{label('provider_settings')}: {provider_name_map.get(provider_name, provider_name)}"
-
-                with st.expander(title, expanded=(provider_name == active_provider)):
-                    api_base = st.text_input(
-                        label("api_base"),
-                        value=cfg["api_base"],
-                        key=f"ai_cfg_{provider_name}_api_base",
-                    )
-                    api_key = st.text_input(
-                        label("api_key"),
-                        value=cfg["api_key"],
-                        type="password",
-                        key=f"ai_cfg_{provider_name}_api_key",
-                    )
-
-                    if provider_name == "deepseek":
-                        model_options = ["deepseek-chat", "deepseek-coder"]
-                        if cfg["model"] and cfg["model"] not in model_options:
-                            model_options = [cfg["model"]] + model_options
-                        model = st.selectbox(
-                            label("model"),
-                            model_options,
-                            index=model_options.index(cfg["model"]) if cfg["model"] in model_options else 0,
-                            key=f"ai_cfg_{provider_name}_model",
-                        )
-                    elif provider_name == "openai":
-                        model_options = ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"]
-                        if cfg["model"] and cfg["model"] not in model_options:
-                            model_options = [cfg["model"]] + model_options
-                        model = st.selectbox(
-                            label("model"),
-                            model_options,
-                            index=model_options.index(cfg["model"]) if cfg["model"] in model_options else 0,
-                            key=f"ai_cfg_{provider_name}_model",
-                        )
-                    else:
-                        model = st.text_input(
-                            label("model"),
-                            value=cfg["model"],
-                            key=f"ai_cfg_{provider_name}_model",
-                        )
-
-                    temperature = st.slider(
-                        label("temperature"),
-                        min_value=0.0,
-                        max_value=1.0,
-                        value=float(cfg["temperature"]),
-                        step=0.1,
-                        key=f"ai_cfg_{provider_name}_temperature",
-                        help=t("temperature_help"),
-                    )
-
-                    timeout = st.number_input(
-                        label("timeout"),
-                        min_value=10,
-                        max_value=600,
-                        value=int(cfg["timeout"]),
-                        key=f"ai_cfg_{provider_name}_timeout",
-                    )
-
-                    edited_providers[provider_name] = {
-                        "api_base": api_base.strip(),
-                        "api_key": api_key.strip(),
-                        "model": model.strip(),
-                        "temperature": float(temperature),
-                        "timeout": int(timeout),
-                    }
-
-            save_clicked = st.form_submit_button(
-                label("save_config"),
-                type="primary",
-                use_container_width=True,
+        with add_col2:
+            new_profile_type = st.selectbox(
+                label("profile_type"),
+                AI_PROVIDER_TYPES,
+                key="new_ai_profile_type",
+                format_func=_provider_label,
             )
+        with add_col3:
+            add_clicked = st.button(label("add_profile"), use_container_width=True)
 
-        if save_clicked:
+        if add_clicked:
+            profile = _build_profile(
+                provider=new_profile_type,
+                name=new_profile_name,
+            )
+            profiles.append(profile)
+            st.session_state.ai_profiles = profiles
+            st.session_state.provider = profile["id"]
+            st.rerun()
+
+        def _persist_ai_profiles(remaining_profiles: list[dict], selected_profile_id: str) -> None:
             payload = {
-                "default_provider": active_provider,
-                "providers": edited_providers,
+                "default_profile_id": selected_profile_id,
+                "profiles": remaining_profiles,
             }
             try:
                 response = requests.put(
@@ -350,14 +442,18 @@ def render():
                     timeout=get_api_timeout(),
                 )
                 if response.status_code == 200:
-                    st.session_state.ai_providers = edited_providers
-                    st.session_state.provider = active_provider
-                    active_cfg = edited_providers[active_provider]
-                    st.session_state.api_key = active_cfg.get("api_key", "")
-                    st.session_state.api_base = active_cfg.get("api_base", "")
-                    st.session_state.model = active_cfg.get("model", "")
-                    st.session_state.temperature = active_cfg.get("temperature", 0.3)
-                    st.session_state.timeout = active_cfg.get("timeout", 30)
+                    st.session_state.ai_profiles = remaining_profiles
+                    st.session_state.provider = selected_profile_id
+
+                    selected = next(
+                        (p for p in remaining_profiles if p["id"] == selected_profile_id),
+                        remaining_profiles[0],
+                    )
+                    st.session_state.api_key = selected.get("api_key", "")
+                    st.session_state.api_base = selected.get("api_base", "")
+                    st.session_state.model = selected.get("model", "")
+                    st.session_state.temperature = selected.get("temperature", 0.3)
+                    st.session_state.timeout = selected.get("timeout", 30)
                     st.success(label("config_saved"))
                 else:
                     st.error(label("config_save_failed", error=response.text))
@@ -365,6 +461,119 @@ def render():
                 st.error(label("backend_not_connected"))
             except Exception as e:
                 st.error(label("config_save_failed", error=str(e)))
+
+        with st.form("ai_profiles_form"):
+            active_profile_id = st.selectbox(
+                label("active_ai_provider"),
+                profile_options,
+                index=profile_options.index(current_profile_id),
+                format_func=format_profile,
+            )
+            st.caption(label("active_ai_provider_help"))
+
+            st.markdown("---")
+            st.subheader(label("multi_provider_config"))
+
+            edited_profiles = []
+            delete_profile_id = None
+            for profile_id in profile_options:
+                profile = profile_by_id[profile_id]
+                title = format_profile(profile_id)
+
+                with st.expander(title, expanded=(profile_id == active_profile_id)):
+                    edited_name = st.text_input(
+                        label("profile_name"),
+                        value=profile["name"],
+                        key=f"ai_profile_{profile_id}_name",
+                    )
+                    edited_type = st.selectbox(
+                        label("profile_type"),
+                        AI_PROVIDER_TYPES,
+                        index=AI_PROVIDER_TYPES.index(profile["provider"])
+                        if profile["provider"] in AI_PROVIDER_TYPES else AI_PROVIDER_TYPES.index("custom"),
+                        key=f"ai_profile_{profile_id}_type",
+                        format_func=_provider_label,
+                    )
+
+                    type_defaults = DEFAULT_AI_PROFILE_TEMPLATE[edited_type]
+                    edited_api_base = st.text_input(
+                        label("api_base"),
+                        value=profile["api_base"] or type_defaults["api_base"],
+                        key=f"ai_profile_{profile_id}_api_base",
+                    )
+                    edited_api_key = st.text_input(
+                        label("api_key"),
+                        value=profile["api_key"],
+                        type="password",
+                        key=f"ai_profile_{profile_id}_api_key",
+                    )
+                    edited_model = st.text_input(
+                        label("model"),
+                        value=profile["model"] or type_defaults["model"],
+                        key=f"ai_profile_{profile_id}_model",
+                    )
+                    edited_temperature = st.slider(
+                        label("temperature"),
+                        min_value=0.0,
+                        max_value=1.0,
+                        value=float(profile["temperature"]),
+                        step=0.1,
+                        key=f"ai_profile_{profile_id}_temperature",
+                        help=t("temperature_help"),
+                    )
+                    edited_timeout = st.number_input(
+                        label("timeout"),
+                        min_value=10,
+                        max_value=600,
+                        value=int(profile["timeout"]),
+                        key=f"ai_profile_{profile_id}_timeout",
+                    )
+
+                    edited_profiles.append(
+                        {
+                            "id": profile_id,
+                            "name": edited_name.strip() or f"{_provider_label(edited_type)} Profile",
+                            "provider": edited_type,
+                            "api_base": edited_api_base.strip(),
+                            "api_key": edited_api_key.strip(),
+                            "model": edited_model.strip(),
+                            "temperature": float(edited_temperature),
+                            "timeout": int(edited_timeout),
+                        }
+                    )
+
+                    if st.form_submit_button(
+                        label("delete_profile"),
+                        key=f"delete_profile_btn_{profile_id}",
+                        use_container_width=True,
+                    ):
+                        delete_profile_id = profile_id
+
+            save_clicked = st.form_submit_button(
+                label("save_config"),
+                type="primary",
+                use_container_width=True,
+            )
+
+        if delete_profile_id:
+            remaining_profiles = [
+                profile for profile in edited_profiles
+                if profile["id"] != delete_profile_id
+            ]
+            if not remaining_profiles:
+                _show_toast_warning(label("at_least_one_profile"))
+            else:
+                selected_profile_id = active_profile_id
+                if selected_profile_id == delete_profile_id:
+                    selected_profile_id = remaining_profiles[0]["id"]
+                _persist_ai_profiles(remaining_profiles, selected_profile_id)
+                st.rerun()
+
+        if save_clicked and not delete_profile_id:
+            if not edited_profiles:
+                _show_toast_warning(label("at_least_one_profile"))
+            else:
+                _persist_ai_profiles(edited_profiles, active_profile_id)
 
     # Chart of Accounts
     with tab2:
@@ -491,8 +700,6 @@ def render():
 
         # Rule list
         try:
-            import requests
-
             response = requests.get(get_api_url("/rules"), timeout=get_api_timeout())
 
             if response.status_code == 200:
@@ -560,8 +767,6 @@ def render():
         st.markdown(f"### {label('backend_status')}")
 
         try:
-            import requests
-
             response = requests.get(get_health_check_url(), timeout=2)
 
             if response.status_code == 200:
@@ -610,6 +815,277 @@ def render():
         - **{t('streamlit')}**: {t('latest')}
         - **{t('fastapi')}**: {t('latest')}
         """)
+
+    # DEG Mapping
+    with tab5:
+        lang = get_current_language()
+        st.subheader(label("deg_provider_mapping_title"))
+        st.info(label("deg_provider_mapping_official_note"))
+
+        mapping_col1, mapping_col2 = st.columns([1, 1])
+        with mapping_col1:
+            reload_mapping_clicked = st.button(
+                label("reload_deg_provider_mapping"),
+                use_container_width=True,
+            )
+        with mapping_col2:
+            save_mapping_clicked = st.button(
+                label("save_deg_provider_mapping"),
+                type="primary",
+                use_container_width=True,
+            )
+
+        mapping_result = st.session_state.get("deg_provider_mapping_result")
+        if mapping_result is None or "deg_provider_mapping_text" not in st.session_state or reload_mapping_clicked:
+            try:
+                response = requests.get(get_api_url("/generate/provider-mapping"), timeout=3)
+                if response.status_code == 200:
+                    mapping_result = response.json()
+                    st.session_state.deg_provider_mapping_result = mapping_result
+                    st.session_state.deg_provider_mapping_text = _render_deg_mapping_text(
+                        mapping_result.get("user_overrides", {})
+                    )
+                    st.session_state.deg_custom_providers = _normalize_custom_provider_rows(
+                        mapping_result.get("custom_providers")
+                    )
+                else:
+                    st.error(label("deg_provider_mapping_load_failed", error=response.text))
+            except Exception as e:
+                st.error(label("deg_provider_mapping_load_failed", error=str(e)))
+
+        mapping_result = st.session_state.get("deg_provider_mapping_result", {})
+        storage = mapping_result.get("storage", {})
+        if storage:
+            st.caption(
+                label(
+                    "deg_mapping_storage",
+                    official=storage.get("official_catalog", "config/deg.yaml"),
+                    mappings=storage.get("mappings", "-"),
+                    custom=storage.get("custom_providers", "-"),
+                )
+            )
+
+        custom_providers = _normalize_custom_provider_rows(
+            st.session_state.get("deg_custom_providers")
+        )
+        st.session_state.deg_custom_providers = custom_providers
+
+        unknown_targets = mapping_result.get("unknown_targets", [])
+        if unknown_targets:
+            st.warning(
+                label(
+                    "deg_provider_mapping_unknown_targets",
+                    targets=", ".join(unknown_targets),
+                )
+            )
+
+        st.markdown(f"### {label('deg_official_provider_catalog')}")
+        official = mapping_result.get("official_providers", [])
+        if official:
+            official_rows = [
+                {
+                    label("deg_mapping_col_code"): item.get("code", ""),
+                    label("deg_mapping_col_translation"): _provider_display_name(item, lang),
+                }
+                for item in official
+            ]
+            official_df = pd.DataFrame(official_rows)
+            st.dataframe(
+                official_df,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        st.markdown(f"### {label('deg_custom_provider_catalog')}")
+        if custom_providers:
+            custom_rows = [
+                {
+                    label("deg_mapping_col_code"): item.get("code", ""),
+                    label("deg_mapping_col_translation"): _provider_display_name(item, lang),
+                }
+                for item in custom_providers
+            ]
+            custom_df = pd.DataFrame(custom_rows)
+            st.dataframe(custom_df, use_container_width=True, hide_index=True)
+        else:
+            st.caption(label("deg_no_custom_providers"))
+
+        st.markdown(f"### {label('deg_current_mapping_preview')}")
+        details = mapping_result.get("mapping_details", [])
+        if details:
+            preview_df = pd.DataFrame(details)
+            preview_df["target_display_name"] = preview_df.apply(
+                lambda row: _provider_display_name(
+                    {
+                        "i18n_key": row.get("target_i18n_key", ""),
+                        "names": row.get("target_names", {}) if isinstance(row.get("target_names"), dict) else {},
+                        "name_en": row.get("target_name_en", ""),
+                        "name_zh": row.get("target_name_zh", ""),
+                        "code": row.get("target", ""),
+                    },
+                    lang,
+                ),
+                axis=1,
+            )
+            preview_df["is_official_target"] = preview_df["is_official_target"].apply(
+                lambda v: label("deg_mapping_target_official") if bool(v) else label("deg_mapping_target_custom")
+            )
+            preview_df = preview_df.rename(
+                columns={
+                    "source": label("deg_mapping_col_source"),
+                    "target": label("deg_mapping_col_target"),
+                    "target_display_name": label("deg_mapping_col_translation"),
+                    "is_official_target": label("deg_mapping_col_target_type"),
+                }
+            )
+            preview_df = preview_df[
+                [
+                    label("deg_mapping_col_source"),
+                    label("deg_mapping_col_target"),
+                    label("deg_mapping_col_translation"),
+                    label("deg_mapping_col_target_type"),
+                ]
+            ]
+            st.dataframe(preview_df, use_container_width=True, hide_index=True)
+
+        st.markdown(f"### {label('deg_add_mapping_entry')}")
+        add_col1, add_col2 = st.columns([1.2, 1])
+        with add_col1:
+            add_source = st.text_input(
+                label("deg_add_mapping_source"),
+                key="deg_add_mapping_source",
+            ).strip().lower()
+        with add_col2:
+            add_target_kind = st.selectbox(
+                label("deg_add_target_kind"),
+                ["official", "custom"],
+                key="deg_add_target_kind",
+                format_func=lambda x: (
+                    label("deg_target_kind_official")
+                    if x == "official" else label("deg_target_kind_custom")
+                ),
+            )
+
+        selected_target_code = ""
+        custom_code = ""
+        custom_name_en = ""
+        custom_name_zh = ""
+
+        if add_target_kind == "official":
+            official_options = mapping_result.get("official_providers", [])
+            official_codes = [item["code"] for item in official_options]
+            if official_codes:
+                selected_target_code = st.selectbox(
+                    label("deg_select_official_provider"),
+                    official_codes,
+                    format_func=lambda code: next(
+                        (
+                            f"{code} ({_provider_display_name(item, lang)})"
+                            for item in official_options
+                            if item.get("code") == code
+                        ),
+                        code,
+                    ),
+                    key="deg_official_target_code",
+                )
+        else:
+            row1, row2, row3 = st.columns(3)
+            with row1:
+                custom_code = st.text_input(
+                    label("deg_custom_provider_code"),
+                    key="deg_custom_provider_code",
+                ).strip().lower()
+            with row2:
+                custom_name_en = st.text_input(
+                    label("deg_custom_provider_name_en"),
+                    key="deg_custom_provider_name_en",
+                ).strip()
+            with row3:
+                custom_name_zh = st.text_input(
+                    label("deg_custom_provider_name_zh"),
+                    key="deg_custom_provider_name_zh",
+                ).strip()
+            selected_target_code = custom_code
+
+        if st.button(label("deg_add_mapping_row"), use_container_width=True):
+            try:
+                if not add_source:
+                    raise ValueError("source is required")
+                if not selected_target_code:
+                    raise ValueError("target code is required")
+
+                mapping = _parse_deg_mapping_text(
+                    st.session_state.get("deg_provider_mapping_text", "")
+                )
+                mapping[add_source] = selected_target_code
+                st.session_state.deg_provider_mapping_text = _render_deg_mapping_text(mapping)
+
+                if add_target_kind == "custom":
+                    updated_custom = {
+                        item["code"]: {
+                            "code": item["code"],
+                            "name_en": item.get("name_en", ""),
+                            "name_zh": item.get("name_zh", ""),
+                        }
+                        for item in st.session_state.get("deg_custom_providers", [])
+                    }
+                    updated_custom[selected_target_code] = {
+                        "code": selected_target_code,
+                        "name_en": custom_name_en,
+                        "name_zh": custom_name_zh,
+                    }
+                    st.session_state.deg_custom_providers = _normalize_custom_provider_rows(
+                        list(updated_custom.values())
+                    )
+
+                st.success(label("deg_mapping_row_added"))
+                st.rerun()
+            except Exception as e:
+                st.error(label("deg_mapping_add_failed", error=str(e)))
+
+        st.text_area(
+            label("deg_provider_mapping_editor"),
+            key="deg_provider_mapping_text",
+            height=220,
+            help=label("deg_provider_mapping_help"),
+        )
+
+        if save_mapping_clicked:
+            try:
+                parsed = _parse_deg_mapping_text(
+                    st.session_state.get("deg_provider_mapping_text", "")
+                )
+                response = requests.put(
+                    get_api_url("/generate/provider-mapping"),
+                    json={
+                        "mappings": parsed,
+                        "custom_providers": st.session_state.get("deg_custom_providers", []),
+                    },
+                    timeout=get_api_timeout(),
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    st.session_state.deg_provider_mapping_result = result
+                    st.session_state.deg_provider_mapping_text = _render_deg_mapping_text(
+                        result.get("user_overrides", {})
+                    )
+                    st.session_state.deg_custom_providers = _normalize_custom_provider_rows(
+                        result.get("custom_providers")
+                    )
+                    unknown_targets = result.get("unknown_targets", [])
+                    if unknown_targets:
+                        st.warning(
+                            label(
+                                "deg_provider_mapping_unknown_targets",
+                                targets=", ".join(unknown_targets),
+                            )
+                        )
+                    st.success(label("deg_provider_mapping_saved"))
+                    st.rerun()
+                else:
+                    st.error(label("deg_provider_mapping_save_failed", error=response.text))
+            except Exception as e:
+                st.error(label("deg_provider_mapping_save_failed", error=str(e)))
 
 
 if __name__ == "__main__":

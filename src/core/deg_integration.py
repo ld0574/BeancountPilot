@@ -8,20 +8,60 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 import csv
 
+from src.core.deg_catalog import (
+    get_official_provider_catalog,
+    get_official_provider_codes,
+    get_default_provider_aliases,
+    get_bank_style_providers,
+)
+
 
 class DoubleEntryGenerator:
     """double-entry-generator CLI integration"""
 
-    def __init__(self, config_dir: Optional[Path] = None, executable: str = "double-entry-generator"):
+    OFFICIAL_PROVIDER_CATALOG = get_official_provider_catalog()
+    OFFICIAL_PROVIDER_CODES = get_official_provider_codes()
+    DEFAULT_PROVIDER_ALIASES = get_default_provider_aliases()
+    BANK_STYLE_PROVIDERS = get_bank_style_providers()
+
+    def __init__(
+        self,
+        config_dir: Optional[Path] = None,
+        executable: str = "double-entry-generator",
+        provider_aliases: Optional[Dict[str, str]] = None,
+    ):
         """
         Initialize DEG integration
 
         Args:
             config_dir: Configuration file directory
             executable: DEG executable command
+            provider_aliases: Optional aliases mapping input provider -> DEG provider code
         """
         self.config_dir = config_dir or Path.home() / ".beancountpilot" / "config"
         self.executable = executable
+        self.official_provider_catalog = get_official_provider_catalog()
+        self.official_provider_codes = {item["code"] for item in self.official_provider_catalog}
+        self.default_provider_aliases = get_default_provider_aliases()
+        self.bank_style_providers = get_bank_style_providers()
+
+        aliases = dict(self.default_provider_aliases)
+        if provider_aliases:
+            aliases.update({str(k).strip().lower(): str(v).strip().lower() for k, v in provider_aliases.items()})
+        self.provider_aliases = aliases
+
+    def _normalize_provider(self, provider: str) -> str:
+        """Normalize app-side data source names to DEG provider names."""
+        provider = (provider or "").strip().lower()
+        return self.provider_aliases.get(provider, provider or "alipay")
+
+    @staticmethod
+    def _to_float(value: Any) -> float:
+        """Best-effort conversion to float."""
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
 
     def call_double_entry_generator(
         self,
@@ -42,24 +82,52 @@ class DoubleEntryGenerator:
         Returns:
             Execution result
         """
-        cmd = [
-            self.executable,
-            "translate",
-            "--config", str(config_file),
-            "--provider", provider,
-            "--output", str(output_file),
-            str(csv_file)
+        provider = self._normalize_provider(provider)
+        command_variants = [
+            # Preferred syntax for modern DEG versions.
+            [
+                self.executable,
+                "translate",
+                "--config", str(config_file),
+                "-p", provider,
+                "-t", "beancount",
+                "-o", str(output_file),
+                str(csv_file),
+            ],
+            # Backward-compatible syntax for older DEG versions.
+            [
+                self.executable,
+                "translate",
+                "--config", str(config_file),
+                "--provider", provider,
+                "--output", str(output_file),
+                str(csv_file),
+            ],
         ]
 
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
+            result = None
+            for cmd in command_variants:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
 
-            if result.returncode == 0:
+                # Success.
+                if result.returncode == 0:
+                    break
+
+                # Retry with fallback flags only when CLI flags are not recognized.
+                stderr = (result.stderr or "").lower()
+                if "unknown flag" in stderr or "unknown shorthand flag" in stderr:
+                    continue
+
+                # Other failures should stop retrying.
+                break
+
+            if result and result.returncode == 0:
                 # Read output file
                 if output_file.exists():
                     with open(output_file, "r", encoding="utf-8") as f:
@@ -78,7 +146,7 @@ class DoubleEntryGenerator:
             else:
                 return {
                     "success": False,
-                    "message": f"CLI execution failed: {result.stderr}",
+                    "message": f"CLI execution failed: {result.stderr if result else 'unknown error'}",
                 }
 
         except subprocess.TimeoutExpired:
@@ -144,10 +212,13 @@ class DoubleEntryGenerator:
     ) -> None:
         """Write CSV file"""
         # Determine CSV format based on provider
+        provider = self._normalize_provider(provider)
         if provider == "alipay":
             fieldnames = ["交易时间", "商品说明", "收/支", "金额", "交易对方", "交易状态"]
         elif provider == "wechat":
             fieldnames = ["交易时间", "商品", "收/支", "金额(元)", "交易类型", "交易对方", "当前状态"]
+        elif provider in self.bank_style_providers:
+            fieldnames = ["交易日期", "摘要", "借贷标志", "收入金额", "支出金额", "对方户名"]
         else:
             # 通用格式
             fieldnames = ["time", "item", "type", "amount", "peer", "status"]
@@ -172,19 +243,39 @@ class DoubleEntryGenerator:
                         row[field] = tx.get("peer", "")
                     elif field == "交易状态" or field == "当前状态" or field == "status":
                         row[field] = tx.get("status", "交易成功")
+                    elif field == "交易日期":
+                        row[field] = tx.get("time", "")
+                    elif field == "摘要":
+                        row[field] = tx.get("item", "") or tx.get("category", "")
+                    elif field == "借贷标志":
+                        tx_type = str(tx.get("type", ""))
+                        row[field] = "贷" if any(k in tx_type for k in ("收", "入", "贷")) else "借"
+                    elif field == "收入金额":
+                        amount = self._to_float(tx.get("amount", 0) or 0)
+                        tx_type = str(tx.get("type", ""))
+                        is_income = amount > 0 and any(k in tx_type for k in ("收", "入", "贷"))
+                        row[field] = f"{amount:.2f}" if is_income else ""
+                    elif field == "支出金额":
+                        amount = self._to_float(tx.get("amount", 0) or 0)
+                        tx_type = str(tx.get("type", ""))
+                        is_income = amount > 0 and any(k in tx_type for k in ("收", "入", "贷"))
+                        row[field] = "" if is_income else f"{abs(amount):.2f}"
+                    elif field == "对方户名":
+                        row[field] = tx.get("peer", "")
                 writer.writerow(row)
 
     def _write_default_config(self, config_file: Path, provider: str) -> None:
         """Write default configuration file"""
         import yaml
 
+        provider = self._normalize_provider(provider)
         config = {
-            "mapping": {
-                "default": "Expenses:Misc",
-            },
-            "accounts": {
-                "alipay": "Assets:Bank:Alipay",
-                "wechat": "Assets:Bank:WeChat",
+            "defaultMinusAccount": "Income:Other",
+            "defaultPlusAccount": "Expenses:Misc",
+            "defaultCurrency": "CNY",
+            "title": "BeancountPilot",
+            provider: {
+                "rules": [],
             },
         }
 

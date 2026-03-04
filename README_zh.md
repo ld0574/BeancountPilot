@@ -123,7 +123,20 @@ streamlit run frontend/app.py
 
 ### 2. 上传交易文件
 
-支持支付宝、微信等平台导出的 CSV 文件。
+支持支付宝、微信、建设银行等平台导出的 `CSV/XLS/XLSX` 文件。
+
+DEG Provider 调用已对齐官方 CLI 语义（`translate -p <provider> -t beancount`），示例：
+
+```bash
+double-entry-generator translate -p ccb -t beancount ccb_records.xls
+double-entry-generator translate -p alipay -t beancount alipay_records.csv
+```
+
+若你的数据源名称与 DEG provider 代码不一致，可在 `Settings -> DEG Mapping` 中配置映射：
+
+1. 官方 provider 字典来自 `config/deg.yaml`（页面内只读），显示名称优先通过 `i18n_key` 从前端 locale 文案读取。
+2. 尽量把来源标签映射到官方 target 代码。
+3. 如果映射到非官方代码，除非你的 DEG 二进制/自定义解析器支持，否则可能转换失败。
 
 ### 3. AI 分类
 

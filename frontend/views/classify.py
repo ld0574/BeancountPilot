@@ -63,12 +63,18 @@ def render():
             unsafe_allow_html=True,
         )
     with top_col3:
+        provider_id = st.session_state.get("provider", "deepseek")
+        provider_name = provider_id
+        for profile in st.session_state.get("ai_profiles", []):
+            if profile.get("id") == provider_id:
+                provider_name = profile.get("name", provider_id)
+                break
         st.markdown(
             (
                 '<div class="kpi-card">'
                 f'<div class="kpi-label">{label("home_current_provider")}</div>'
-                f'<div class="kpi-value" style="font-size:1.2rem;text-transform:uppercase;">'
-                f'{st.session_state.get("provider", "deepseek")}</div>'
+                f'<div class="kpi-value" style="font-size:1.2rem;">'
+                f"{provider_name}</div>"
                 "</div>"
             ),
             unsafe_allow_html=True,

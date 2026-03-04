@@ -33,7 +33,7 @@ async def classify_transactions(
 
     Args:
         request: Classification request
-        provider: AI Provider name
+        provider: AI profile id (or provider type for backward compatibility)
         db: Database session
 
     Returns:

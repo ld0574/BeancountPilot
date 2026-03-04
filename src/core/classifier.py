@@ -39,11 +39,10 @@ class Classifier:
             ai_config = UserConfigRepository.get(self.db, "ai_config")
             if ai_config:
                 config = json.loads(ai_config)
-                provider_config = config.get("providers", {}).get(
-                    self.provider_name, {}
-                )
+                provider_type, provider_config = self._resolve_provider_config(config)
             else:
                 # Default configuration
+                provider_type = "deepseek"
                 provider_config = {
                     "api_base": "https://api.deepseek.com/v1",
                     "api_key": "",
@@ -52,9 +51,59 @@ class Classifier:
                     "timeout": 30,
                 }
 
-            self.provider = create_provider(self.provider_name, provider_config)
+            self.provider = create_provider(provider_type, provider_config)
 
         return self.provider
+
+    def _resolve_provider_config(self, config: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+        """
+        Resolve provider type and config.
+
+        Supports both new profile-based format and legacy provider-map format.
+        """
+        # New profile-based format
+        if isinstance(config.get("profiles"), list):
+            profiles = config.get("profiles", [])
+            default_ref = config.get("default_profile_id", "")
+
+            selected = None
+            # 1) Match by profile id
+            for profile in profiles:
+                if profile.get("id") == self.provider_name:
+                    selected = profile
+                    break
+            # 2) Backward-compatible: match by provider type
+            if selected is None:
+                for profile in profiles:
+                    if profile.get("provider") == self.provider_name:
+                        selected = profile
+                        break
+            # 3) Match default profile id
+            if selected is None and default_ref:
+                for profile in profiles:
+                    if profile.get("id") == default_ref:
+                        selected = profile
+                        break
+            # 4) First available profile
+            if selected is None and profiles:
+                selected = profiles[0]
+
+            if selected:
+                provider_type = str(selected.get("provider", "deepseek")).lower()
+                if provider_type not in {"deepseek", "openai", "ollama", "custom"}:
+                    provider_type = "custom"
+                return provider_type, dict(selected)
+
+        # Legacy provider-map format
+        provider_type = self.provider_name.lower()
+        provider_config = config.get("providers", {}).get(provider_type, {})
+
+        # Fallback to deepseek if requested provider missing in legacy map.
+        if not provider_config:
+            provider_type = "deepseek"
+            provider_config = config.get("providers", {}).get(provider_type, {})
+
+        return provider_type, provider_config
 
     def _get_chart_of_accounts(self) -> str:
         """Get chart of accounts"""

@@ -34,7 +34,7 @@ def _load_default_provider() -> str:
         response = requests.get(get_api_url("/ai/config"), timeout=timeout)
         if response.status_code == 200:
             data = response.json()
-            default_provider = data.get("default_provider")
+            default_provider = data.get("default_profile_id") or data.get("default_provider")
             if isinstance(default_provider, str) and default_provider:
                 return default_provider
     except Exception:

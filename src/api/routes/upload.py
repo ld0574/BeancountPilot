@@ -4,15 +4,65 @@ File upload routes
 
 import csv
 import io
+import json
 from typing import List
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from sqlalchemy.orm import Session
 
 from src.db.session import get_db
 from src.db.repositories import TransactionRepository
+from src.db.repositories import UserConfigRepository
 from src.api.schemas.transaction import TransactionResponse
+from src.core.deg_catalog import (
+    get_default_provider_aliases,
+    get_bank_style_providers,
+    get_official_provider_codes,
+)
 
 router = APIRouter()
+
+
+def _load_user_provider_aliases(db: Session) -> dict[str, str]:
+    """Load user overrides for DEG provider aliases from DB."""
+    raw = UserConfigRepository.get(db, "deg_provider_aliases")
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+
+    official_codes = get_official_provider_codes()
+    normalized: dict[str, str] = {}
+    for key, value in data.items():
+        k = str(key).strip().lower()
+        v = str(value).strip().lower()
+        if not k or not v:
+            continue
+        # Keep official providers read-only for consistency with generate mapping API.
+        if k in official_codes and v != k:
+            continue
+        normalized[k] = v
+    return normalized
+
+
+def _resolve_provider(provider: str, db: Session) -> tuple[str, str, bool]:
+    """
+    Resolve provider via shared DEG mapping source.
+
+    Returns:
+        (raw_provider, normalized_provider, is_bank_style)
+    """
+    raw_provider = (provider or "").strip().lower() or "alipay"
+    aliases = get_default_provider_aliases()
+    aliases.update(_load_user_provider_aliases(db))
+    normalized_provider = aliases.get(raw_provider, raw_provider)
+
+    bank_style_set = get_bank_style_providers()
+    is_bank_style = (raw_provider in bank_style_set) or (normalized_provider in bank_style_set)
+    return raw_provider, normalized_provider, is_bank_style
 
 
 def _decode_csv_content(content: bytes) -> str:
@@ -55,6 +105,32 @@ def _parse_amount(value: str) -> float:
     return float(cleaned)
 
 
+def _load_table_rows(file: UploadFile, content: bytes) -> list[dict]:
+    """
+    Load tabular rows from CSV/XLS/XLSX into a list of dictionaries.
+    """
+    filename = (file.filename or "").lower()
+
+    if filename.endswith(".csv"):
+        csv_file = io.StringIO(_decode_csv_content(content))
+        reader = csv.DictReader(csv_file)
+        return list(reader)
+
+    if filename.endswith(".xls") or filename.endswith(".xlsx"):
+        try:
+            import pandas as pd
+        except Exception as e:
+            raise ValueError(f"Excel parsing requires pandas/openpyxl: {str(e)}")
+
+        df = pd.read_excel(io.BytesIO(content))
+        if df is None:
+            return []
+        df = df.fillna("")
+        return df.to_dict(orient="records")
+
+    raise ValueError("Only CSV/XLS/XLSX files are supported")
+
+
 @router.post("/upload", response_model=List[TransactionResponse])
 async def upload_csv(
     file: UploadFile = File(...),
@@ -62,10 +138,10 @@ async def upload_csv(
     db: Session = Depends(get_db),
 ):
     """
-    Upload CSV file and parse transaction data
+    Upload transaction file and parse transaction data
 
     Args:
-        file: CSV file
+        file: CSV/XLS/XLSX file
         provider: Data provider (alipay, wechat, etc.)
         db: Database session
 
@@ -73,19 +149,22 @@ async def upload_csv(
         Parsed transaction list
     """
     # Validate file type
-    if not file.filename.endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Only CSV files are supported")
+    filename = (file.filename or "").lower()
+    if not (filename.endswith(".csv") or filename.endswith(".xls") or filename.endswith(".xlsx")):
+        raise HTTPException(status_code=400, detail="Only CSV/XLS/XLSX files are supported")
 
     try:
+        _, provider, is_bank_style_provider = _resolve_provider(provider, db)
+
         # Read file content
         content = await file.read()
-        csv_file = io.StringIO(_decode_csv_content(content))
-
-        # Parse CSV
+        rows = _load_table_rows(file, content)
         transactions = []
-        reader = csv.DictReader(csv_file)
 
-        for row in reader:
+        for row in rows:
+            # Normalize keys to text for robust matching.
+            row = {str(k).strip(): v for k, v in dict(row).items()}
+
             # Map fields based on provider
             if provider == "alipay":
                 peer = row.get("交易对方", "")
@@ -101,7 +180,7 @@ async def upload_csv(
                 transaction_type = row.get("收/支", "")
                 time = row.get("交易时间", "")
                 amount = _parse_amount(row.get("金额(元)", "0"))
-            elif provider == "banks":
+            elif is_bank_style_provider:
                 peer = _pick_first(
                     row,
                     [
@@ -124,11 +203,11 @@ async def upload_csv(
                 category = item
                 transaction_type = _pick_first(
                     row,
-                    ["收/支", "借贷标志", "借贷方向", "交易类型", "支出或收入", "type"],
+                    ["收/支", "借贷标志", "借贷方向", "交易类型", "支出或收入", "借贷", "type"],
                 )
                 time = _pick_first(
                     row,
-                    ["交易时间", "交易日期", "记账日期", "入账时间", "发生时间", "日期", "time"],
+                    ["交易时间", "交易日期", "记账日期", "入账时间", "发生时间", "日期", "time", "交易日"],
                 )
 
                 amount = 0.0
@@ -146,8 +225,12 @@ async def upload_csv(
                         break
 
                 if amount == 0.0:
-                    income_amount = _parse_amount(_pick_first(row, ["收入金额", "贷方发生额", "收入"]))
-                    expense_amount = _parse_amount(_pick_first(row, ["支出金额", "借方发生额", "支出"]))
+                    income_amount = _parse_amount(
+                        _pick_first(row, ["收入金额", "贷方发生额", "收入", "贷方金额"])
+                    )
+                    expense_amount = _parse_amount(
+                        _pick_first(row, ["支出金额", "借方发生额", "支出", "借方金额"])
+                    )
                     amount = income_amount if income_amount > 0 else expense_amount
             else:
                 # Generic CSV format
