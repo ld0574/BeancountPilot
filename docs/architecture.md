@@ -680,7 +680,7 @@ BeancountPilot/
 ├── frontend/                  # Streamlit 前端
 │   ├── __init__.py
 │   ├── app.py                 # 主应用
-│   ├── pages/                 # 多页面
+│   ├── views/                 # 多页面
 │   │   ├── upload.py          # 上传页面
 │   │   ├── classify.py        # 分类页面
 │   │   └── settings.py        # 设置页面

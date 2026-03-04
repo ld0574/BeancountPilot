@@ -2,12 +2,16 @@
 Classification routes
 """
 
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from src.db.session import get_db
-from src.db.repositories import TransactionRepository, ClassificationRepository
+from src.db.repositories import (
+    TransactionRepository,
+    ClassificationRepository,
+    UserConfigRepository,
+)
 from src.core.classifier import Classifier
 from src.api.schemas.transaction import (
     ClassificationRequest,
@@ -21,7 +25,7 @@ router = APIRouter()
 @router.post("/classify", response_model=ClassificationResponse)
 async def classify_transactions(
     request: ClassificationRequest,
-    provider: str = "deepseek",
+    provider: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     """
@@ -36,8 +40,15 @@ async def classify_transactions(
         Classification results
     """
     try:
+        # Resolve provider: explicit query param > stored default > deepseek
+        resolved_provider = (
+            provider
+            or UserConfigRepository.get(db, "ai_default_provider")
+            or "deepseek"
+        )
+
         # Create classifier
-        classifier = Classifier(db, provider)
+        classifier = Classifier(db, resolved_provider)
 
         # Execute classification
         results = await classifier.classify_transactions(request.transactions)

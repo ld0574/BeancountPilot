@@ -31,7 +31,7 @@ BeancountPilot/
 ├── frontend/              # Streamlit frontend
 │   ├── components/        # UI components
 │   ├── locales/           # i18n language files
-│   ├── pages/             # Page modules
+│   ├── views/             # Page modules
 │   ├── app.py             # Main app entry
 │   ├── config.py          # Frontend config
 │   └── i18n.py            # Internationalization
@@ -78,6 +78,9 @@ pip install -r requirements-dev.txt
 python -m src.db.init
 ```
 
+This step also initializes default Beancount template files under `~/.beancountpilot/data/`:
+`assets.bean`, `equity.bean`, `expenses.bean`, `income.bean`, `liabilities.bean`.
+
 4. Configure AI API Key
 
 Configure your AI Provider API Key in the application settings:
@@ -105,19 +108,32 @@ Visit [http://localhost:8501](http://localhost:8501) to get started.
 
 ## 📖 Usage Guide
 
-### 1. Upload Transaction Files
+### 1. Configure Ledger Template Files (Workflow First Step)
+
+Go to `Settings -> Chart of Accounts -> Ledger Template Files`.
+
+Recommended workflow:
+
+1. Edit `liabilities.bean` (or other `.bean` files), then click `Save Ledger File`.
+2. Check that `Chart of Accounts` is synced from ledger files.
+3. Update `Chart of Accounts` if needed, then click `Sync To Ledger Files` to write back.
+
+This keeps `Chart of Accounts` and the five ledger template files synchronized:
+`assets.bean`, `equity.bean`, `expenses.bean`, `income.bean`, `liabilities.bean`.
+
+### 2. Upload Transaction Files
 
 Support CSV files exported from platforms like Alipay, WeChat, etc.
 
-### 2. AI Classification
+### 3. AI Classification
 
 The system automatically uses AI to classify transactions, and you can manually adjust classification results.
 
-### 3. Generate Beancount File
+### 4. Generate Beancount File
 
 After confirming classification results, click the generate button to export Beancount format file.
 
-### 4. Feedback Learning
+### 5. Feedback Learning
 
 By correcting classification results, the system automatically learns and optimizes future classifications.
 

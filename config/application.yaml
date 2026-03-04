@@ -78,6 +78,8 @@ frontend:
     Expenses:Travel:Hotels
     Expenses:Travel:Transport
     Expenses:Misc
+    Liabilities:CreditCard:Bank:CMB:C1915
+    Equity:OpeningBalances
     Income:Salary
     Income:Investment
     Income:Other

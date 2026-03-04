@@ -8,9 +8,38 @@ import json
 from pathlib import Path
 
 from src.db.models import Base
-from src.db.session import init_db, get_session
+from src.db.session import init_db, get_session, get_db_path
 from src.db.repositories import UserConfigRepository
 from src.utils.config import load_config, _get_default_config
+
+
+DEFAULT_LEDGER_FILES = {
+    "assets.bean": """; BeancountPilot default assets accounts
+2010-01-01 open Assets:Bank:Cash CNY  ; 现金
+2010-01-01 open Assets:Bank:Alipay CNY  ; 支付宝余额
+2010-01-01 open Assets:Bank:WeChat CNY  ; 微信零钱
+""",
+    "equity.bean": """; BeancountPilot default equity accounts
+2010-01-01 open Equity:OpeningBalances CNY  ; 期初余额
+2010-01-01 open Equity:RetainedEarnings CNY  ; 留存收益
+""",
+    "expenses.bean": """; BeancountPilot default expenses accounts
+2010-01-01 open Expenses:Food:Dining CNY  ; 餐饮
+2010-01-01 open Expenses:Food:Groceries CNY  ; 买菜
+2010-01-01 open Expenses:Transport:Taxi CNY  ; 打车
+2010-01-01 open Expenses:Transport:Subway CNY  ; 地铁
+2010-01-01 open Expenses:Utilities:Phone CNY  ; 手机费
+2010-01-01 open Expenses:Utilities:Internet CNY  ; 宽带费
+""",
+    "income.bean": """; BeancountPilot default income accounts
+2010-01-01 open Income:Salary CNY  ; 工资收入
+2010-01-01 open Income:Investment CNY  ; 投资收入
+2010-01-01 open Income:Other CNY  ; 其他收入
+""",
+    "liabilities.bean": """; BeancountPilot default liabilities accounts
+2010-01-01 open Liabilities:CreditCard:Bank:CMB:C1915 CNY  ; 招商银行信用卡商务(1915)
+""",
+}
 
 
 def init_database():
@@ -28,6 +57,11 @@ def init_database():
     try:
         _init_default_config(db)
         print("✓ Default configuration initialized")
+        created_files = _init_default_ledger_files()
+        if created_files:
+            print(f"✓ Ledger templates created: {', '.join(created_files)}")
+        else:
+            print("✓ Ledger templates already exist")
     finally:
         db.close()
 
@@ -63,6 +97,8 @@ Expenses:Education:Courses
 Expenses:Travel:Hotels
 Expenses:Travel:Transport
 Expenses:Misc
+Liabilities:CreditCard:Bank:CMB:C1915
+Equity:OpeningBalances
 Income:Salary
 Income:Investment
 Income:Other"""
@@ -84,6 +120,29 @@ Income:Other"""
     # Set default language if not exists
     if UserConfigRepository.get(db, "language") is None:
         UserConfigRepository.set(db, "language", "en")
+
+
+def _init_default_ledger_files() -> list[str]:
+    """
+    Initialize default Beancount ledger files in data directory.
+
+    Returns:
+        List of newly created filenames.
+    """
+    data_dir = get_db_path().parent
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    created = []
+    for filename, content in DEFAULT_LEDGER_FILES.items():
+        file_path = data_dir / filename
+        if file_path.exists():
+            continue
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content.rstrip() + "\n")
+        created.append(filename)
+
+    return created
 
 
 def reset_database():

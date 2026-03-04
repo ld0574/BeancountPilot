@@ -50,6 +50,17 @@ Uber,Ride,Ride,支出,2024-01-01 15:00:00,25.00"""
     return io.BytesIO(csv_content.encode("utf-8"))
 
 
+@pytest.fixture
+def sample_bank_csv_file():
+    """Create sample bank CSV file for testing."""
+    import io
+    csv_content = """交易日期,摘要,借贷标志,收入金额,支出金额,对方户名
+2024-01-02 09:00:00,工资,贷,12000.00,0.00,某公司
+2024-01-03 11:30:00,午餐,借,0.00,45.80,餐饮商户
+2024-01-04 15:20:00,交通,借,0.00,18.00,地铁公司"""
+    return io.BytesIO(csv_content.encode("utf-8"))
+
+
 class TestHealthCheck:
     """Test health check endpoint"""
 
@@ -84,6 +95,20 @@ class TestUploadAPI:
         data = response.json()
         assert isinstance(data, list)
         assert len(data) == 3
+
+    def test_upload_bank_csv_file(self, client, sample_bank_csv_file):
+        """Test uploading bank CSV file."""
+        response = client.post(
+            "/api/upload",
+            files={"file": ("bank.csv", sample_bank_csv_file, "text/csv")},
+            params={"provider": "banks"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) == 3
+        assert data[0]["provider"] == "banks"
 
     def test_upload_non_csv_file(self, client):
         """Test uploading non-CSV file"""

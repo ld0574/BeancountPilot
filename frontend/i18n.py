@@ -6,6 +6,7 @@ Supports English and Chinese switching, default is English
 import streamlit as st
 import json
 from pathlib import Path
+import unicodedata
 
 # Default language
 DEFAULT_LANGUAGE = "en"
@@ -24,17 +25,24 @@ def _load_translations(lang: str) -> dict:
     Returns:
         Translation dictionary
     """
-    if lang in _translations_cache:
-        return _translations_cache[lang]
-
     try:
         # Get the path to the locales directory
         locales_dir = Path(__file__).parent / "locales"
         locale_file = locales_dir / f"{lang}.json"
 
+        if locale_file.exists():
+            current_mtime = locale_file.stat().st_mtime_ns
+            cached = _translations_cache.get(lang)
+            if cached and cached.get("mtime") == current_mtime:
+                return cached["translations"]
+
         with open(locale_file, "r", encoding="utf-8") as f:
             translations = json.load(f)
-            _translations_cache[lang] = translations
+            mtime = locale_file.stat().st_mtime_ns if locale_file.exists() else None
+            _translations_cache[lang] = {
+                "mtime": mtime,
+                "translations": translations,
+            }
             return translations
     except FileNotFoundError:
         # Fallback to English if translation file not found
@@ -89,6 +97,39 @@ def t(key: str, **kwargs) -> str:
             return text
 
     return text
+
+
+def _strip_leading_symbols(text: str) -> str:
+    """
+    Remove leading emoji/symbol prefixes used as icon markers in labels.
+    """
+    start = 0
+    while start < len(text):
+        char = text[start]
+        if char.isspace():
+            start += 1
+            continue
+
+        code = ord(char)
+        is_cjk = 0x4E00 <= code <= 0x9FFF
+        if char.isalnum() or is_cjk:
+            break
+
+        category = unicodedata.category(char)
+        if category.startswith(("S", "P")):
+            start += 1
+            continue
+
+        break
+
+    return text[start:].strip()
+
+
+def label(key: str, **kwargs) -> str:
+    """
+    Get translation text suitable for UI labels (without icon-like prefix symbols).
+    """
+    return _strip_leading_symbols(t(key, **kwargs))
 
 
 def get_language_options() -> list:

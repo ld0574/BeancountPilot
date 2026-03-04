@@ -4,7 +4,7 @@ Transaction table component
 
 import streamlit as st
 import pandas as pd
-from frontend.i18n import t
+from frontend.i18n import t, label
 
 
 class TransactionTable:
@@ -35,32 +35,32 @@ class TransactionTable:
         df = self._merge_data()
 
         if df.empty:
-            st.info(t("no_transaction_data"))
+            st.info(label("no_transaction_data"))
             return None
 
         # Configure columns
         column_config = {
             "peer": st.column_config.TextColumn(t("payee"), width="medium"),
             "item": st.column_config.TextColumn(t("item_label"), width="medium"),
-            "category": st.column_config.TextColumn(t("category_label"), width="small"),
-            "type": st.column_config.TextColumn(t("type_label"), width="small"),
-            "time": st.column_config.TextColumn(t("time_label"), width="medium"),
+            "category": st.column_config.TextColumn(label("category_label"), width="small"),
+            "type": st.column_config.TextColumn(label("type_label"), width="small"),
+            "time": st.column_config.TextColumn(label("time_label"), width="medium"),
             "amount": st.column_config.NumberColumn(t("amount"), format="%.2f", width="small"),
             "account": st.column_config.SelectboxColumn(
-                t("account"),
+                label("account"),
                 options=self._get_chart_of_accounts(),
                 required=True,
                 width="large",
             ),
             "confidence": st.column_config.ProgressColumn(
-                t("confidence"),
+                label("confidence"),
                 help=t("confidence_help"),
                 format="%.2f",
                 min_value=0,
                 max_value=1,
                 width="small",
             ),
-            "source": st.column_config.TextColumn(t("source"), width="small"),
+            "source": st.column_config.TextColumn(label("source"), width="small"),
         }
 
         # Render table

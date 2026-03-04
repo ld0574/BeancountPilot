@@ -12,38 +12,91 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from frontend.i18n import init_i18n, t
+from frontend.i18n import init_i18n, t, label
 from frontend.config import get_api_url, get_api_timeout
 
 
 def render():
     """Render classification page"""
-    st.markdown(f'<div class="main-header"><h1>{t("classify_title")}</h1></div>', unsafe_allow_html=True)
+    imported_summary = label(
+        "imported_count", count=len(st.session_state.get("transactions", []))
+    ).replace("**", "")
+    st.markdown(
+        (
+            f'<div class="main-header"><h1>{label("classify_title")}</h1>'
+            f"<p>{imported_summary}</p></div>"
+        ),
+        unsafe_allow_html=True,
+    )
 
     # Check if there are imported transaction data
     if "transactions" not in st.session_state:
-        st.warning(t("no_transactions_warning"))
-        st.info(t("go_to_upload"))
+        st.warning(label("no_transactions_warning"))
+        st.info(label("go_to_upload"))
+        if st.button(label("upload_files"), type="primary", use_container_width=True):
+            st.session_state.current_page = "upload"
+            st.rerun()
         return
 
     transactions = st.session_state.transactions
 
-    st.markdown(t("imported_count", count=len(transactions)))
+    top_col1, top_col2, top_col3 = st.columns(3)
+    with top_col1:
+        st.markdown(
+            (
+                '<div class="kpi-card">'
+                f'<div class="kpi-label">{label("home_transactions_loaded")}</div>'
+                f'<div class="kpi-value">{len(transactions)}</div>'
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
+    with top_col2:
+        accounts_count = len(parse_chart_of_accounts(st.session_state.get("chart_of_accounts", "")))
+        st.markdown(
+            (
+                '<div class="kpi-card">'
+                '<div class="kpi-label">Available Accounts</div>'
+                f'<div class="kpi-value">{accounts_count}</div>'
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
+    with top_col3:
+        st.markdown(
+            (
+                '<div class="kpi-card">'
+                f'<div class="kpi-label">{label("home_current_provider")}</div>'
+                f'<div class="kpi-value" style="font-size:1.2rem;text-transform:uppercase;">'
+                f'{st.session_state.get("provider", "deepseek")}</div>'
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
 
     # Classification buttons
-    col1, col2, col3 = st.columns([1, 1, 2])
+    col1, col2, col3 = st.columns([1, 1, 1.6])
 
     with col1:
-        classify_button = st.button(t("ai_classify"), type="primary", use_container_width=True)
+        classify_button = st.button(label("ai_classify"), type="primary", use_container_width=True)
 
     with col2:
-        if st.button(t("reclassify"), use_container_width=True):
+        if st.button(label("reclassify"), use_container_width=True):
             st.session_state.classifications = None
             st.rerun()
+    with col3:
+        st.markdown(
+            (
+                '<div class="section-card" style="margin-bottom:0;">'
+                "Run AI classification to populate editable account mappings, then generate Beancount entries."
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
 
     # Execute classification
     if classify_button:
-        with st.spinner(t("classifying")):
+        with st.spinner(label("classifying")):
             try:
                 import requests
 
@@ -66,7 +119,7 @@ def render():
                     result = response.json()
                     classifications = result["results"]
 
-                    st.success(t("classify_complete", count=len(classifications)))
+                    st.success(label("classify_complete", count=len(classifications)))
 
                     # Save to session state
                     st.session_state.classifications = classifications
@@ -78,17 +131,17 @@ def render():
 
                     st.rerun()
                 else:
-                    st.error(t("classify_failed", error=response.text))
+                    st.error(label("classify_failed", error=response.text))
 
             except requests.exceptions.ConnectionError:
-                st.error(t("backend_not_connected"))
+                st.error(label("backend_not_connected"))
             except Exception as e:
-                st.error(t("classify_failed", error=str(e)))
+                st.error(label("classify_failed", error=str(e)))
 
     # Display classification results
     if "classifications" in st.session_state and st.session_state.classifications:
         st.markdown("---")
-        st.subheader(t("classification_results"))
+        st.subheader(label("classification_results"))
 
         # Merged data
         merged_data = st.session_state.get("merged_data", [])
@@ -106,7 +159,7 @@ def render():
                     "item": st.column_config.TextColumn(t("item_label"), width="medium"),
                     "amount": st.column_config.NumberColumn(t("amount"), format="%.2f"),
                     "account": st.column_config.SelectboxColumn(
-                        t("account"),
+                        label("account"),
                         options=parse_chart_of_accounts(
                             st.session_state.get("chart_of_accounts", "")
                         ),
@@ -114,39 +167,39 @@ def render():
                         width="large",
                     ),
                     "confidence": st.column_config.ProgressColumn(
-                        t("confidence"),
+                        label("confidence"),
                         help=t("confidence_help"),
                         format="%.2f",
                         min_value=0,
                         max_value=1,
                         width="small",
                     ),
-                    "source": st.column_config.TextColumn(t("source"), width="small"),
+                    "source": st.column_config.TextColumn(label("source"), width="small"),
                 },
                 hide_index=True,
             )
 
             # Save changes
-            if st.button(t("save_changes"), use_container_width=True):
+            if st.button(label("save_changes"), use_container_width=True):
                 # TODO: Save changes to backend
-                st.success(t("changes_saved"))
+                st.success(label("changes_saved"))
 
             # Generate Beancount file button
             st.markdown("---")
-            st.subheader(t("generate_beancount"))
+            st.subheader(label("generate_beancount"))
 
             col1, col2 = st.columns([1, 1])
 
             with col1:
-                if st.button(t("generate_and_download"), type="primary", use_container_width=True):
-                    with st.spinner(t("generating")):
+                if st.button(label("generate_and_download"), type="primary", use_container_width=True):
+                    with st.spinner(label("generating")):
                         try:
                             import requests
 
                             # Prepare request data
                             request_data = {
                                 "transactions": edited_df.to_dict("records"),
-                                "provider": st.session_state.get("provider", "alipay"),
+                                "provider": st.session_state.get("data_source", "alipay"),
                             }
 
                             # Call API
@@ -160,28 +213,28 @@ def render():
                                 result = response.json()
 
                                 if result["success"]:
-                                    st.success(t("generate_success"))
+                                    st.success(label("generate_success"))
 
                                     # Download button
                                     st.download_button(
-                                        label=t("download_beancount"),
+                                        label=label("download_beancount"),
                                         data=result["beancount_file"],
                                         file_name="output.beancount",
                                         mime="text/plain",
                                         use_container_width=True,
                                     )
                                 else:
-                                    st.error(t("generate_failed", message=result['message']))
+                                    st.error(label("generate_failed", message=result['message']))
                             else:
-                                st.error(t("generate_failed", message=response.text))
+                                st.error(label("generate_failed", message=response.text))
 
                         except requests.exceptions.ConnectionError:
-                            st.error(t("backend_not_connected"))
+                            st.error(label("backend_not_connected"))
                         except Exception as e:
-                            st.error(t("generate_failed", message=str(e)))
+                            st.error(label("generate_failed", message=str(e)))
 
             with col2:
-                if st.button(t("preview"), use_container_width=True):
+                if st.button(label("preview"), use_container_width=True):
                     # Preview Beancount format
                     preview = generate_beancount_preview(edited_df)
                     st.code(preview, language="text")
@@ -189,7 +242,7 @@ def render():
     # Statistics
     if "classifications" in st.session_state and st.session_state.classifications:
         st.markdown("---")
-        st.subheader(t("classification_stats"))
+        st.subheader(label("classification_stats"))
 
         classifications = st.session_state.classifications
 
@@ -197,18 +250,18 @@ def render():
 
         with col1:
             ai_count = sum(1 for c in classifications if c["source"] == "ai")
-            st.metric(t("ai_classified"), ai_count)
+            st.metric(label("ai_classified"), ai_count)
 
         with col2:
             rule_count = sum(1 for c in classifications if c["source"] == "rule")
-            st.metric(t("rule_matched"), rule_count)
+            st.metric(label("rule_matched"), rule_count)
 
         with col3:
             avg_confidence = sum(c["confidence"] for c in classifications) / len(classifications)
-            st.metric(t("avg_confidence"), f"{avg_confidence:.2f}")
+            st.metric(label("avg_confidence"), f"{avg_confidence:.2f}")
 
         with col4:
-            st.metric(t("total_classifications"), len(classifications))
+            st.metric(label("total_classifications"), len(classifications))
 
 
 def merge_transactions_and_classifications(transactions, classifications):
@@ -268,7 +321,8 @@ def generate_beancount_preview(df):
 
         lines.append(f"{date_str} * \"{row.get('item', '')}\"")
         lines.append(f"  {row.get('account', 'Expenses:Misc')}  {row.get('amount', 0):.2f} CNY")
-        lines.append(f"  Assets:Bank:{row.get('provider', 'Alipay').capitalize()}  -{row.get('amount', 0):.2f} CNY")
+        provider = row.get("provider", st.session_state.get("data_source", "alipay"))
+        lines.append(f"  Assets:Bank:{provider.capitalize()}  -{row.get('amount', 0):.2f} CNY")
         lines.append("")
 
     return "\n".join(lines)

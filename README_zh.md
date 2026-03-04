@@ -31,7 +31,7 @@ BeancountPilot/
 ├── frontend/              # Streamlit 前端
 │   ├── components/        # UI 组件
 │   ├── locales/           # i18n 语言文件
-│   ├── pages/             # 页面模块
+│   ├── views/             # 页面模块
 │   ├── app.py             # 主应用入口
 │   ├── config.py          # 前端配置
 │   └── i18n.py            # 国际化支持
@@ -78,6 +78,9 @@ pip install -r requirements-dev.txt
 python -m src.db.init
 ```
 
+该步骤还会在 `~/.beancountpilot/data/` 初始化默认 Beancount 模板文件：
+`assets.bean`、`equity.bean`、`expenses.bean`、`income.bean`、`liabilities.bean`。
+
 4. 配置 AI API Key
 
 在应用设置中配置你的 AI Provider API Key：
@@ -105,19 +108,32 @@ streamlit run frontend/app.py
 
 ## 📖 使用指南
 
-### 1. 上传交易文件
+### 1. 配置账本模板文件（Workflow 第一步）
+
+进入 `Settings -> Chart of Accounts -> Ledger Template Files`。
+
+推荐流程：
+
+1. 先编辑 `liabilities.bean`（或其他 `.bean` 文件），点击 `Save Ledger File`。
+2. 确认上方 `Chart of Accounts` 已从账本文件同步。
+3. 如需调整账户表，修改后点击 `Sync To Ledger Files` 回写到账本文件。
+
+这样可以保持 `Chart of Accounts` 与五个账本模板文件始终一致：  
+`assets.bean`、`equity.bean`、`expenses.bean`、`income.bean`、`liabilities.bean`。
+
+### 2. 上传交易文件
 
 支持支付宝、微信等平台导出的 CSV 文件。
 
-### 2. AI 分类
+### 3. AI 分类
 
 系统会自动使用 AI 对交易进行分类，你也可以手动调整分类结果。
 
-### 3. 生成 Beancount 文件
+### 4. 生成 Beancount 文件
 
 确认分类结果后，点击生成按钮导出 Beancount 格式文件。
 
-### 4. 反馈学习
+### 5. 反馈学习
 
 通过修正分类结果，系统会自动学习并优化后续分类。
 

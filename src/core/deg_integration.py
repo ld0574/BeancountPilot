@@ -12,14 +12,16 @@ import csv
 class DoubleEntryGenerator:
     """double-entry-generator CLI integration"""
 
-    def __init__(self, config_dir: Optional[Path] = None):
+    def __init__(self, config_dir: Optional[Path] = None, executable: str = "double-entry-generator"):
         """
         Initialize DEG integration
 
         Args:
             config_dir: Configuration file directory
+            executable: DEG executable command
         """
         self.config_dir = config_dir or Path.home() / ".beancountpilot" / "config"
+        self.executable = executable
 
     def call_double_entry_generator(
         self,
@@ -41,7 +43,7 @@ class DoubleEntryGenerator:
             Execution result
         """
         cmd = [
-            "double-entry-generator",
+            self.executable,
             "translate",
             "--config", str(config_file),
             "--provider", provider,
@@ -191,12 +193,35 @@ class DoubleEntryGenerator:
 
     def check_deg_installed(self) -> bool:
         """Check if double-entry-generator is installed"""
-        try:
-            result = subprocess.run(
-                ["double-entry-generator", "--version"],
-                capture_output=True,
-                timeout=5,
-            )
-            return result.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return False
+        return self.get_deg_status()["installed"]
+
+    def get_deg_status(self) -> Dict[str, Any]:
+        """Get DEG installation status and version text if available."""
+        # Newer DEG versions use `version` subcommand; some builds may still support `--version`.
+        version_checks = [
+            [self.executable, "version"],
+            [self.executable, "--version"],
+        ]
+
+        for cmd in version_checks:
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    output = (result.stdout or result.stderr or "").strip()
+                    version = output.splitlines()[0] if output else ""
+                    return {
+                        "installed": True,
+                        "version": version,
+                    }
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                continue
+
+        return {
+            "installed": False,
+            "version": "",
+        }
