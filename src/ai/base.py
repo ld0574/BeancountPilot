@@ -29,6 +29,7 @@ class BaseLLMProvider(ABC):
         transaction: Dict[str, Any],
         chart_of_accounts: str,
         historical_rules: str,
+        language: str = "en",
     ) -> Dict[str, Any]:
         """
         Classify a transaction
@@ -49,6 +50,7 @@ class BaseLLMProvider(ABC):
         transactions: list[Dict[str, Any]],
         chart_of_accounts: str,
         historical_rules: str,
+        language: str = "en",
     ) -> list[Dict[str, Any]]:
         """
         Batch classify transactions

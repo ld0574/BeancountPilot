@@ -2,6 +2,7 @@
 
 import io
 import json
+import re
 from typing import List
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from sqlalchemy.orm import Session
@@ -96,6 +97,15 @@ def _parse_amount(value: str) -> float:
         return 0.0
 
 
+def _looks_like_datetime(value: str) -> bool:
+    """Best-effort check for transaction datetime/date text."""
+    text = str(value or "").strip()
+    if not text:
+        return False
+    # Common export formats: 2025-01-01 / 2025/01/01 with optional HH:MM(:SS)
+    return bool(re.search(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", text))
+
+
 def _load_table_rows(file: UploadFile, content: bytes, provider: str = "") -> list[dict]:
     """
     Load tabular rows from CSV/XLS/XLSX into a list of dictionaries.
@@ -170,7 +180,7 @@ async def upload_csv(
                 normalized_row["category"] = category
                 normalized_row["method"] = _pick_first(
                     row,
-                    ["支付方式", "付款方式", "支付渠道", "method"],
+                    ["收/付款方式", "支付方式", "付款方式", "支付渠道", "method"],
                 )
                 normalized_row["status"] = _pick_first(
                     row,
@@ -306,6 +316,9 @@ async def upload_csv(
                 and not str(category or "").strip()
                 and amount == 0.0
             ):
+                continue
+            # Skip metadata/header rows that still have text but no valid date.
+            if not _looks_like_datetime(time):
                 continue
 
             transaction = TransactionRepository.create(

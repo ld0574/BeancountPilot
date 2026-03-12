@@ -487,6 +487,8 @@ with st.sidebar:
             type="primary" if st.session_state.current_page == page_key else "secondary",
             key=f"nav_{page_key}",
         ):
+            if st.session_state.current_page != page_key:
+                st.session_state.scroll_to_top_once = True
             st.session_state.current_page = page_key
 
     st.markdown("---")

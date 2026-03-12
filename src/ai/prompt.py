@@ -5,6 +5,14 @@ Prompt Template Management
 from typing import Dict, Any, List
 
 
+def _reasoning_language_instruction(language: str = "en") -> str:
+    """Build prompt instruction for reasoning language."""
+    lang = str(language or "en").strip().lower()
+    if lang.startswith("zh"):
+        return "Write `reasoning` in Simplified Chinese."
+    return "Write `reasoning` in English."
+
+
 # Default classification prompt template
 DEFAULT_CLASSIFICATION_PROMPT = """You are a professional financial accounting assistant, responsible for classifying transactions into Beancount accounts.
 
@@ -28,6 +36,7 @@ Rules:
 - targetAccount = category account (expense/income/etc).
 - methodAccount = payment/funding account (typically Assets:* or Liabilities:*).
 - Never output empty methodAccount.
+- {reasoning_language_instruction}
 - Keep reasoning concise (one short sentence).
 
 Output format (JSON):
@@ -59,6 +68,7 @@ Rules:
 - targetAccount = category account (expense/income/etc).
 - methodAccount = payment/funding account (typically Assets:* or Liabilities:*).
 - Never output empty methodAccount.
+- {reasoning_language_instruction}
 - Keep reasoning concise (one short sentence).
 
 Output format (JSON array):
@@ -81,6 +91,7 @@ def build_classification_prompt(
     chart_of_accounts: str,
     historical_rules: str,
     template: str = None,
+    language: str = "en",
 ) -> str:
     """
     Build classification prompt
@@ -106,6 +117,7 @@ def build_classification_prompt(
         type=transaction.get("type", ""),
         time=transaction.get("time", ""),
         amount=transaction.get("amount", ""),
+        reasoning_language_instruction=_reasoning_language_instruction(language),
     )
 
 
@@ -114,6 +126,7 @@ def build_batch_classification_prompt(
     chart_of_accounts: str,
     historical_rules: str,
     template: str = None,
+    language: str = "en",
 ) -> str:
     """
     Build batch classification prompt
@@ -148,6 +161,7 @@ def build_batch_classification_prompt(
         chart_of_accounts=chart_of_accounts,
         historical_rules=historical_rules,
         transactions=transactions_str,
+        reasoning_language_instruction=_reasoning_language_instruction(language),
     )
 
 

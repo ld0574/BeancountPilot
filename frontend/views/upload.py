@@ -207,6 +207,46 @@ def render():
         # Display file info
         st.success(label("uploaded_success", filename=uploaded_file.name))
 
+        def _import_uploaded_transactions() -> None:
+            """Import uploaded file and jump to classify page."""
+            with st.spinner(label("importing_data")):
+                try:
+                    uploaded_file.seek(0)
+                    response = requests.post(
+                        get_api_url("/upload"),
+                        files={"file": uploaded_file},
+                        params={"provider": provider or provider_selected},
+                        timeout=get_api_timeout(),
+                    )
+
+                    if response.status_code == 200:
+                        transactions = response.json()
+                        st.success(label("import_success", count=len(transactions)))
+
+                        st.session_state.transactions = transactions
+                        st.session_state.data_source = provider or provider_selected
+                        st.session_state.pop("classifications", None)
+                        st.session_state.pop("merged_data", None)
+                        st.session_state.auto_classify_pending = True
+                        st.session_state.scroll_to_top_once = True
+                        st.session_state.current_page = "classify"
+                        st.rerun()
+
+                    else:
+                        st.error(label("import_failed", error=response.text))
+
+                except requests.exceptions.ConnectionError:
+                    st.error(label("backend_not_connected"))
+                except Exception as e:
+                    st.error(label("import_failed", error=str(e)))
+
+        import_col1, import_col2 = st.columns([1.2, 2.8])
+        with import_col1:
+            if st.button(label("import_data"), type="primary", width="stretch", key="import_data_top"):
+                _import_uploaded_transactions()
+        with import_col2:
+            st.caption(t("upload_import_behavior_note"))
+
         # Read and preview CSV
         try:
             df = _read_table_with_fallback(uploaded_file, provider=provider or provider_selected)
@@ -235,46 +275,6 @@ def render():
             # Display column names
             st.subheader(label("column_names"))
             st.markdown(f'<div class="section-card">{", ".join(df.columns.tolist())}</div>', unsafe_allow_html=True)
-
-            # Confirm import button
-            st.markdown("---")
-            st.caption(t("upload_import_behavior_note"))
-
-            if st.button(label("import_data"), type="primary", width="stretch"):
-                with st.spinner(label("importing_data")):
-                    # Call API to import data
-                    try:
-                        # Reset file pointer
-                        uploaded_file.seek(0)
-
-                        # Call API
-                        response = requests.post(
-                            get_api_url("/upload"),
-                            files={"file": uploaded_file},
-                            params={"provider": provider or provider_selected},
-                            timeout=get_api_timeout(),
-                        )
-
-                        if response.status_code == 200:
-                            transactions = response.json()
-                            st.success(label("import_success", count=len(transactions)))
-
-                            # Save to session state
-                            st.session_state.transactions = transactions
-                            st.session_state.data_source = provider or provider_selected
-                            st.session_state.pop("classifications", None)
-                            st.session_state.pop("merged_data", None)
-                            st.session_state.auto_classify_pending = True
-                            st.session_state.current_page = "classify"
-                            st.rerun()
-
-                        else:
-                            st.error(label("import_failed", error=response.text))
-
-                    except requests.exceptions.ConnectionError:
-                        st.error(label("backend_not_connected"))
-                    except Exception as e:
-                        st.error(label("import_failed", error=str(e)))
 
         except Exception as e:
             st.error(label("file_parse_failed", error=str(e)))

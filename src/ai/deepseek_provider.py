@@ -19,6 +19,7 @@ class DeepSeekProvider(OpenAIProvider):
         transaction: Dict[str, Any],
         chart_of_accounts: str,
         historical_rules: str,
+        language: str = "en",
     ) -> Dict[str, Any]:
         """
         Classify a transaction
@@ -32,13 +33,19 @@ class DeepSeekProvider(OpenAIProvider):
             Classification result
         """
         # DeepSeek has better Chinese support, can adjust prompts
-        return await super().classify(transaction, chart_of_accounts, historical_rules)
+        return await super().classify(
+            transaction,
+            chart_of_accounts,
+            historical_rules,
+            language=language,
+        )
 
     async def batch_classify(
         self,
         transactions: List[Dict[str, Any]],
         chart_of_accounts: str,
         historical_rules: str,
+        language: str = "en",
     ) -> List[Dict[str, Any]]:
         """
         Batch classify transactions
@@ -52,5 +59,8 @@ class DeepSeekProvider(OpenAIProvider):
             List of classification results
         """
         return await super().batch_classify(
-            transactions, chart_of_accounts, historical_rules
+            transactions,
+            chart_of_accounts,
+            historical_rules,
+            language=language,
         )

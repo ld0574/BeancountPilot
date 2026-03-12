@@ -67,12 +67,19 @@ class Classifier:
         """Extract target/method account from stored rule model."""
         target_account = str(getattr(rule, "account", "") or "").strip()
         method_account = ""
+        deg_has_target = True
         try:
             conditions = json.loads(getattr(rule, "conditions", "") or "{}")
         except Exception:
             conditions = {}
         if isinstance(conditions, dict):
             method_account = cls._first_text_value(conditions.get("methodAccount", ""))
+            if conditions.get("_deg_has_target") is False:
+                deg_has_target = False
+            elif conditions.get("_deg_only") is True and "targetAccount" not in conditions:
+                deg_has_target = False
+            if not deg_has_target:
+                target_account = cls._first_text_value(conditions.get("targetAccount", ""))
         if method_account == "/":
             method_account = ""
         return target_account, method_account
@@ -81,24 +88,87 @@ class Classifier:
     def _extract_tx_fields(transaction: Dict[str, Any]) -> Dict[str, str]:
         """Extract provider-specific raw fields from transaction.raw_data."""
         raw_data = transaction.get("raw_data", "")
+        parsed_dict: Dict[str, str] = {}
         if isinstance(raw_data, dict):
-            return {str(k): str(v or "") for k, v in raw_data.items()}
-        if not raw_data:
-            return {}
-
-        # Prefer JSON; fallback for legacy str(dict) records.
-        parsed = None
-        try:
-            parsed = json.loads(raw_data)
-        except Exception:
+            parsed_dict = {str(k): str(v or "") for k, v in raw_data.items()}
+        else:
+            if not raw_data:
+                return {}
+            # Prefer JSON; fallback for legacy str(dict) records.
+            parsed = None
             try:
-                parsed = ast.literal_eval(raw_data)
+                parsed = json.loads(raw_data)
             except Exception:
-                parsed = None
+                try:
+                    parsed = ast.literal_eval(raw_data)
+                except Exception:
+                    parsed = None
+            if not isinstance(parsed, dict):
+                return {}
+            parsed_dict = {str(k): str(v or "") for k, v in parsed.items()}
 
-        if isinstance(parsed, dict):
-            return {str(k): str(v or "") for k, v in parsed.items()}
-        return {}
+        # Legacy malformed Alipay rows:
+        # {"-----": "2025-..", "None": [交易分类, 交易对方, 对方账号, 商品说明, 收/支, 金额, 收/付款方式, 交易状态, ...]}
+        raw_none = parsed_dict.get("None", "")
+        legacy_values: list[str] = []
+        if raw_none:
+            try:
+                maybe = ast.literal_eval(raw_none) if isinstance(raw_none, str) else raw_none
+                if isinstance(maybe, list):
+                    legacy_values = [str(v or "").strip() for v in maybe]
+            except Exception:
+                legacy_values = []
+        if legacy_values:
+            legacy_headers = [
+                "交易分类",
+                "交易对方",
+                "对方账号",
+                "商品说明",
+                "收/支",
+                "金额",
+                "收/付款方式",
+                "交易状态",
+                "交易订单号",
+                "商家订单号",
+                "备注",
+            ]
+            for idx, header in enumerate(legacy_headers):
+                if idx >= len(legacy_values):
+                    break
+                if legacy_values[idx]:
+                    parsed_dict.setdefault(header, legacy_values[idx])
+
+        # Normalize aliases for rule matching.
+        method_value = (
+            parsed_dict.get("method")
+            or parsed_dict.get("收/付款方式")
+            or parsed_dict.get("支付方式")
+            or parsed_dict.get("付款方式")
+            or parsed_dict.get("支付渠道")
+            or ""
+        )
+        status_value = (
+            parsed_dict.get("status")
+            or parsed_dict.get("交易状态")
+            or parsed_dict.get("当前状态")
+            or parsed_dict.get("状态")
+            or ""
+        )
+        tx_type_value = (
+            parsed_dict.get("txType")
+            or parsed_dict.get("transactionType")
+            or parsed_dict.get("交易分类")
+            or parsed_dict.get("消费分类")
+            or ""
+        )
+        if method_value:
+            parsed_dict["method"] = str(method_value)
+        if status_value:
+            parsed_dict["status"] = str(status_value)
+        if tx_type_value:
+            parsed_dict["txType"] = str(tx_type_value)
+
+        return parsed_dict
 
     def _get_auto_rule_confidence_threshold(self) -> float:
         """Confidence threshold for converting AI results into auto rules."""
@@ -288,10 +358,12 @@ class Classifier:
             if not result.get("success"):
                 return {}
             entries = self._parse_beancount_posting_accounts(result.get("beancount_file", ""))
+            # DEG may skip malformed rows; index-based mapping would become unsafe.
+            # In that case, disable this prefill batch and rely on rule/AI fallback.
+            if len(entries) != len(transactions):
+                return {}
             prefill: Dict[str, Dict[str, str]] = {}
             for idx, tx in enumerate(transactions):
-                if idx >= len(entries):
-                    break
                 target_account, method_account = self._pick_target_and_method(entries[idx])
                 key = str(tx.get("id", "")).strip() or f"idx:{idx}"
                 prefill[key] = {
@@ -544,6 +616,7 @@ Income:Other
         self,
         transaction: Dict[str, Any],
         chart_of_accounts: Optional[str] = None,
+        language: str = "en",
     ) -> Dict[str, Any]:
         """
         Classify a single transaction
@@ -569,20 +642,22 @@ Income:Other
 
         # Provider/global DEG rules first: prefer user, fallback to auto.
         fallback_reason = ""
+        fallback_method_account = ""
         if matched_rules:
             user_rules = [r for r in matched_rules if r.source == "user"]
             candidate_rules = user_rules or matched_rules
             rule = max(candidate_rules, key=lambda r: r.confidence)
             target_account, method_account = self._extract_rule_accounts(rule)
-            if self._has_complete_accounts(target_account or rule.account, method_account):
+            if self._has_complete_accounts(target_account, method_account):
                 return {
-                    "account": target_account or rule.account,
-                    "targetAccount": target_account or rule.account,
+                    "account": target_account,
+                    "targetAccount": target_account,
                     "methodAccount": method_account,
                     "confidence": rule.confidence,
                     "reasoning": "Matched DEG rule",
                     "source": "rule",
                 }
+            fallback_method_account = method_account
             fallback_reason = "Matched DEG rule but account fields were incomplete; used AI fallback"
 
         # 2. Use AI classification
@@ -592,7 +667,10 @@ Income:Other
         historical_rules = self._get_historical_rules()
 
         result = await provider.classify(
-            transaction, chart_of_accounts_text, historical_rules
+            transaction,
+            chart_of_accounts_text,
+            historical_rules,
+            language=language,
         )
         normalized_target_account = self._normalize_account_for_chart(
             transaction,
@@ -601,7 +679,13 @@ Income:Other
         )
         result["account"] = normalized_target_account
         result["targetAccount"] = normalized_target_account
-        result["methodAccount"] = self._first_text_value(result.get("methodAccount", ""))
+        ai_method_account = self._first_text_value(result.get("methodAccount", ""))
+        if self._is_empty_or_other_account(ai_method_account):
+            ai_method_account = ""
+        if self._is_empty_or_other_account(fallback_method_account):
+            fallback_method_account = ""
+        # Prefer rule-derived funding account; only fallback to AI when missing.
+        result["methodAccount"] = fallback_method_account or ai_method_account
         if fallback_reason:
             base_reasoning = str(result.get("reasoning", "")).strip()
             result["reasoning"] = f"{fallback_reason}. {base_reasoning}".strip()
@@ -613,6 +697,7 @@ Income:Other
         self,
         transactions: List[Dict[str, Any]],
         chart_of_accounts: Optional[str] = None,
+        language: str = "en",
     ) -> List[Dict[str, Any]]:
         """
         Batch classify transactions
@@ -673,17 +758,27 @@ Income:Other
                 candidate_rules = user_rules or matched_rules
                 rule = max(candidate_rules, key=lambda r: r.confidence)
                 target_account, method_account = self._extract_rule_accounts(rule)
-                if self._has_complete_accounts(target_account or rule.account, method_account):
+                if self._has_complete_accounts(target_account, method_account):
                     results.append({
                         "transaction": tx,
-                        "account": target_account or rule.account,
-                        "targetAccount": target_account or rule.account,
+                        "account": target_account,
+                        "targetAccount": target_account,
                         "methodAccount": method_account,
                         "confidence": rule.confidence,
                         "reasoning": "Matched DEG rule",
                         "source": "rule",
                     })
                     continue
+                fallback_method = method_account
+                if self._is_empty_or_other_account(fallback_method):
+                    fallback_method = ""
+                results.append({
+                    "transaction": tx,
+                    "source": "ai",
+                    "rule_prefill_method": fallback_method,
+                    "rule_fallback": bool(fallback_method),
+                })
+                continue
 
             # No matching rule, use AI
             results.append({"transaction": tx, "source": "ai"})
@@ -696,7 +791,10 @@ Income:Other
             historical_rules = self._get_historical_rules()
 
             ai_results = await provider.batch_classify(
-                ai_transactions, chart_of_accounts_text, historical_rules
+                ai_transactions,
+                chart_of_accounts_text,
+                historical_rules,
+                language=language,
             )
 
             # Merge results
@@ -707,9 +805,16 @@ Income:Other
                     tx_id_key = str(tx.get("id", "")).strip() or f"idx:{i}"
                     prefill = deg_prefill_map.get(tx_id_key, {})
                     prefill_method = str(prefill.get("methodAccount", "")).strip()
+                    if self._is_empty_or_other_account(prefill_method):
+                        prefill_method = ""
+                    rule_prefill_method = str(result.get("rule_prefill_method", "")).strip()
+                    if self._is_empty_or_other_account(rule_prefill_method):
+                        rule_prefill_method = ""
                     ai_method = self._first_text_value(
                         ai_results[ai_index].get("methodAccount", "")
                     )
+                    if self._is_empty_or_other_account(ai_method):
+                        ai_method = ""
                     normalized_account = self._normalize_account_for_chart(
                         tx,
                         ai_results[ai_index].get("account", ""),
@@ -718,15 +823,11 @@ Income:Other
                     results[i].update({
                         "account": normalized_account,
                         "targetAccount": normalized_account,
-                        "methodAccount": ai_method or prefill_method,
+                        # Prefer DEG/rule-derived funding account; fallback to AI only when missing.
+                        "methodAccount": prefill_method or rule_prefill_method or ai_method,
                         "confidence": ai_results[ai_index]["confidence"],
                         "reasoning": ai_results[ai_index]["reasoning"],
                     })
-                    self._create_auto_rule_from_ai_result(
-                        result["transaction"],
-                        normalized_account,
-                        float(ai_results[ai_index].get("confidence", 0.0)),
-                    )
                     ai_index += 1
 
         return results

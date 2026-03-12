@@ -31,6 +31,7 @@ class OpenAIProvider(BaseLLMProvider):
         transaction: Dict[str, Any],
         chart_of_accounts: str,
         historical_rules: str,
+        language: str = "en",
     ) -> Dict[str, Any]:
         """
         Classify a transaction
@@ -45,7 +46,7 @@ class OpenAIProvider(BaseLLMProvider):
         """
         # Build prompt
         prompt = build_classification_prompt(
-            transaction, chart_of_accounts, historical_rules
+            transaction, chart_of_accounts, historical_rules, language=language
         )
 
         try:
@@ -82,6 +83,7 @@ class OpenAIProvider(BaseLLMProvider):
         transactions: List[Dict[str, Any]],
         chart_of_accounts: str,
         historical_rules: str,
+        language: str = "en",
     ) -> List[Dict[str, Any]]:
         """
         Batch classify transactions
@@ -98,7 +100,7 @@ class OpenAIProvider(BaseLLMProvider):
         if len(transactions) <= 10:
             # Build batch prompt
             prompt = build_batch_classification_prompt(
-                transactions, chart_of_accounts, historical_rules
+                transactions, chart_of_accounts, historical_rules, language=language
             )
 
             try:
@@ -124,7 +126,7 @@ class OpenAIProvider(BaseLLMProvider):
                 if len(results) != len(transactions):
                     # Mismatch, classify one by one
                     return await self._classify_one_by_one(
-                        transactions, chart_of_accounts, historical_rules
+                        transactions, chart_of_accounts, historical_rules, language=language
                     )
 
                 return results
@@ -132,12 +134,12 @@ class OpenAIProvider(BaseLLMProvider):
             except Exception as e:
                 # Error handling, classify one by one
                 return await self._classify_one_by_one(
-                    transactions, chart_of_accounts, historical_rules
+                    transactions, chart_of_accounts, historical_rules, language=language
                 )
         else:
             # Large number of transactions, classify one by one
             return await self._classify_one_by_one(
-                transactions, chart_of_accounts, historical_rules
+                transactions, chart_of_accounts, historical_rules, language=language
             )
 
     async def _classify_one_by_one(
@@ -145,9 +147,10 @@ class OpenAIProvider(BaseLLMProvider):
         transactions: List[Dict[str, Any]],
         chart_of_accounts: str,
         historical_rules: str,
+        language: str = "en",
     ) -> List[Dict[str, Any]]:
         """Classify transactions one by one"""
         tasks = [
-            self.classify(tx, chart_of_accounts, historical_rules) for tx in transactions
+            self.classify(tx, chart_of_accounts, historical_rules, language=language) for tx in transactions
         ]
         return await asyncio.gather(*tasks)

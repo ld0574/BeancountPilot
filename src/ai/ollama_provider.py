@@ -21,6 +21,7 @@ class OllamaProvider(OpenAIProvider):
         transaction: Dict[str, Any],
         chart_of_accounts: str,
         historical_rules: str,
+        language: str = "en",
     ) -> Dict[str, Any]:
         """
         Classify a transaction
@@ -34,13 +35,19 @@ class OllamaProvider(OpenAIProvider):
             Classification result
         """
         # Local model may need more detailed prompts
-        return await super().classify(transaction, chart_of_accounts, historical_rules)
+        return await super().classify(
+            transaction,
+            chart_of_accounts,
+            historical_rules,
+            language=language,
+        )
 
     async def batch_classify(
         self,
         transactions: List[Dict[str, Any]],
         chart_of_accounts: str,
         historical_rules: str,
+        language: str = "en",
     ) -> List[Dict[str, Any]]:
         """
         Batch classify transactions
@@ -55,5 +62,8 @@ class OllamaProvider(OpenAIProvider):
         """
         # Local model batch processing may be slow, use one-by-one classification
         return await self._classify_one_by_one(
-            transactions, chart_of_accounts, historical_rules
+            transactions,
+            chart_of_accounts,
+            historical_rules,
+            language=language,
         )

@@ -54,6 +54,7 @@ async def classify_transactions(
         results = await classifier.classify_transactions(
             request.transactions,
             chart_of_accounts=request.chart_of_accounts,
+            language=request.language,
         )
 
         # Save classification results

@@ -3,18 +3,49 @@ Transaction classification page
 """
 
 import sys
+import uuid
 from pathlib import Path
 
 import streamlit as st
 import pandas as pd
 import requests
+import streamlit.components.v1 as components
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from frontend.i18n import init_i18n, t, label
+from frontend.i18n import init_i18n, t, label, get_current_language
 from frontend.config import get_api_url, get_api_timeout
+
+
+def _localize_reasoning_text(reasoning: str) -> str:
+    """Localize built-in/system reasoning phrases to current i18n language."""
+    text = str(reasoning or "").strip()
+    if not text:
+        return ""
+
+    exact_map = {
+        "Matched DEG rule": label("reason_matched_deg_rule"),
+        "Matched DEG prefill": label("reason_matched_deg_prefill"),
+    }
+    if text in exact_map:
+        return exact_map[text]
+
+    fallback_prefix = "Matched DEG rule but account fields were incomplete; used AI fallback"
+    if text.startswith(fallback_prefix):
+        tail = text[len(fallback_prefix):].strip()
+        localized = label("reason_deg_fallback_ai")
+        if tail.startswith("."):
+            tail = tail[1:].strip()
+        return f"{localized}. {tail}" if tail else localized
+
+    parse_failed_prefix = "Parse failed:"
+    if text.startswith(parse_failed_prefix):
+        detail = text[len(parse_failed_prefix):].strip()
+        return label("reason_parse_failed", message=detail)
+
+    return text
 
 
 def _run_classification(transactions) -> bool:
@@ -23,6 +54,7 @@ def _run_classification(transactions) -> bool:
         "transactions": transactions,
         "chart_of_accounts": st.session_state.get("chart_of_accounts", ""),
         "provider": st.session_state.get("provider", "deepseek"),
+        "language": get_current_language(),
     }
 
     response = requests.post(
@@ -105,6 +137,8 @@ def _ensure_classification_df(merged_data):
         df["source"] = "ai"
     if "reasoning" not in df.columns:
         df["reasoning"] = ""
+    if "provider" not in df.columns:
+        df["provider"] = ""
 
     if "id" not in df.columns:
         df["id"] = [str(i) for i in range(1, len(df) + 1)]
@@ -115,21 +149,34 @@ def _ensure_classification_df(merged_data):
     return df
 
 
-def _apply_classification_filters(df, focus_mode: str, ai_conf_threshold: float, keyword: str):
-    """Apply review filters on classification results."""
+def _split_rule_ai_rows(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split rows into rule-matched and AI-classified groups."""
+    if df.empty:
+        return df.copy(), df.copy()
+
+    source_series = df["source"].astype(str).str.lower()
+    rule_df = df[source_series == "rule"].copy()
+    ai_df = df[source_series != "rule"].copy()
+    return rule_df, ai_df
+
+
+def _filter_ai_review_rows(df: pd.DataFrame, review_mode: str, threshold: float, keyword: str) -> pd.DataFrame:
+    """Filter AI review queue."""
     if df.empty:
         return df
 
     filtered = df.copy()
-    source_series = filtered["source"].astype(str).str.lower()
+    confidence_series = pd.to_numeric(filtered.get("confidence", 0.0), errors="coerce").fillna(0.0)
 
-    if focus_mode == "ai_only":
-        filtered = filtered[source_series == "ai"]
-    elif focus_mode == "rule_only":
-        filtered = filtered[source_series == "rule"]
-    elif focus_mode == "ai_review":
-        confidence_series = pd.to_numeric(filtered.get("confidence", 0.0), errors="coerce").fillna(0.0)
-        filtered = filtered[(source_series == "ai") & (confidence_series < ai_conf_threshold)]
+    if review_mode == "low_conf":
+        filtered = filtered[confidence_series < threshold]
+    elif review_mode == "missing_accounts":
+        mask = []
+        for _, row in filtered.iterrows():
+            target_issue = _account_issue(row.get("targetAccount", ""))
+            method_issue = _account_issue(row.get("methodAccount", ""))
+            mask.append(bool(target_issue or method_issue))
+        filtered = filtered[pd.Series(mask, index=filtered.index)]
 
     text = str(keyword or "").strip().lower()
     if text:
@@ -146,6 +193,179 @@ def _apply_classification_filters(df, focus_mode: str, ai_conf_threshold: float,
             filtered = filtered[merged_text.str.contains(text, na=False)]
 
     return filtered
+
+
+def _pick_suggestion_matcher(row: dict) -> tuple[str, str]:
+    """Pick one stable matcher field for suggested DEG rule."""
+    peer = str(row.get("peer", "")).strip()
+    item = str(row.get("item", "")).strip()
+    category = str(row.get("category", "")).strip()
+    if peer and item and peer == item:
+        item = ""
+    if peer:
+        return "peer", peer
+    if item:
+        return "item", item
+    if category:
+        return "category", category
+    return "", ""
+
+
+def _rule_suggestion_signature(
+    provider: str,
+    match_field: str,
+    match_value: str,
+    target_account: str,
+    method_account: str,
+) -> str:
+    """Build comparable signature for rule suggestion de-dup."""
+    parts = [
+        str(provider or "").strip().lower(),
+        str(match_field or "").strip().lower(),
+        str(match_value or "").strip().lower(),
+        str(target_account or "").strip().lower(),
+        str(method_account or "").strip().lower(),
+    ]
+    return "||".join(parts)
+
+
+def _build_ai_rule_suggestions(ai_df: pd.DataFrame, min_confidence: float) -> pd.DataFrame:
+    """Create rule suggestions from AI results without persisting."""
+    if ai_df.empty:
+        return pd.DataFrame()
+
+    rows = []
+    seen: set[str] = set()
+    for _, row in ai_df.iterrows():
+        target_account = str(row.get("targetAccount", "")).strip()
+        method_account = str(row.get("methodAccount", "")).strip()
+        if _account_issue(target_account) or _account_issue(method_account):
+            continue
+
+        confidence_value = pd.to_numeric(row.get("confidence", 0.0), errors="coerce")
+        confidence = 0.0 if pd.isna(confidence_value) else float(confidence_value)
+        if confidence < min_confidence:
+            continue
+
+        match_field, match_value = _pick_suggestion_matcher(row.to_dict())
+        if not match_field or not match_value:
+            continue
+
+        provider = str(row.get("provider", "")).strip().lower()
+        signature = _rule_suggestion_signature(
+            provider,
+            match_field,
+            match_value,
+            target_account,
+            method_account,
+        )
+        if signature in seen:
+            continue
+        seen.add(signature)
+        rows.append(
+            {
+                "select": False,
+                "id": str(row.get("id", "")),
+                "provider": provider,
+                "matchField": match_field,
+                "matchValue": match_value,
+                "targetAccount": target_account,
+                "methodAccount": method_account,
+                "confidence": max(0.0, min(confidence, 1.0)),
+                "reasoning": str(row.get("reasoning", "")).strip(),
+                "signature": signature,
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def _load_existing_rule_signatures() -> set[str]:
+    """Load signatures of existing rules for de-dup in suggestion UI."""
+    signatures: set[str] = set()
+    try:
+        response = requests.get(
+            get_api_url("/rules"),
+            params={"skip": 0, "limit": 2000},
+            timeout=get_api_timeout(),
+        )
+    except Exception:
+        return signatures
+
+    if response.status_code != 200:
+        return signatures
+
+    for rule in response.json():
+        account = str(rule.get("account", "")).strip()
+        if not account:
+            continue
+
+        conditions = rule.get("conditions", {}) or {}
+        provider_values: list[str] = [""]
+        raw_provider = conditions.get("provider")
+        if isinstance(raw_provider, str) and raw_provider.strip():
+            provider_values = [raw_provider.strip().lower()]
+        elif isinstance(raw_provider, list):
+            normalized = [str(item).strip().lower() for item in raw_provider if str(item).strip()]
+            provider_values = normalized or [""]
+
+        method_account = str(conditions.get("methodAccount", "")).strip()
+
+        for key in ("peer", "item", "category"):
+            raw_value = conditions.get(key)
+            tokens: list[str] = []
+            if isinstance(raw_value, str):
+                tokens = [raw_value]
+            elif isinstance(raw_value, list):
+                tokens = [str(item) for item in raw_value]
+            for token in [str(item).strip() for item in tokens if str(item).strip() and str(item).strip() != "/"]:
+                for provider in provider_values:
+                    signatures.add(
+                        _rule_suggestion_signature(
+                            provider,
+                            key,
+                            token,
+                            account,
+                            method_account,
+                        )
+                    )
+    return signatures
+
+
+def _build_rule_payload_from_suggestion(row: dict) -> tuple[dict, str]:
+    """Convert one suggestion row to RuleCreate payload."""
+    provider = str(row.get("provider", "")).strip().lower()
+    match_field = str(row.get("matchField", "")).strip()
+    match_value = str(row.get("matchValue", "")).strip()
+    target_account = str(row.get("targetAccount", "")).strip()
+    method_account = str(row.get("methodAccount", "")).strip()
+    confidence_value = pd.to_numeric(row.get("confidence", 0.0), errors="coerce")
+    confidence = 0.0 if pd.isna(confidence_value) else float(confidence_value)
+    confidence = max(0.0, min(confidence, 1.0))
+
+    conditions = {match_field: [match_value]}
+    if provider:
+        conditions["provider"] = provider
+    if method_account:
+        conditions["methodAccount"] = method_account
+
+    provider_part = provider or "global"
+    rule_name = f"ai-{provider_part}-{match_field}-{uuid.uuid4().hex[:8]}"
+    payload = {
+        "name": rule_name,
+        "conditions": conditions,
+        "account": target_account,
+        "confidence": confidence,
+        "source": "user",
+    }
+    signature = _rule_suggestion_signature(
+        provider,
+        match_field,
+        match_value,
+        target_account,
+        method_account,
+    )
+    return payload, signature
 
 
 def _merge_filtered_edits(full_df: pd.DataFrame, edited_df: pd.DataFrame) -> pd.DataFrame:
@@ -169,6 +389,22 @@ def _merge_filtered_edits(full_df: pd.DataFrame, edited_df: pd.DataFrame) -> pd.
 
 def render():
     """Render classification page"""
+    if st.session_state.get("scroll_to_top_once", False):
+        components.html(
+            """
+            <script>
+            try {
+              const parentDoc = window.parent.document;
+              window.parent.scrollTo(0, 0);
+              const main = parentDoc.querySelector("section.main");
+              if (main) { main.scrollTo(0, 0); }
+            } catch (e) {}
+            </script>
+            """,
+            height=0,
+        )
+        st.session_state.scroll_to_top_once = False
+
     imported_summary = label(
         "imported_count", count=len(st.session_state.get("transactions", []))
     ).replace("**", "")
@@ -284,24 +520,33 @@ def render():
         st.markdown("---")
         st.subheader(label("classification_results"))
 
-        # Merged data
         merged_data = st.session_state.get("merged_data", [])
-
         if merged_data:
             full_df = _ensure_classification_df(merged_data)
+            account_options = build_account_options(
+                st.session_state.get("chart_of_accounts", ""),
+                full_df.to_dict("records"),
+            )
+            rule_df, ai_df = _split_rule_ai_rows(full_df)
 
-            filter_col1, filter_col2, filter_col3 = st.columns([1.2, 1, 1.4])
+            summary_col1, summary_col2 = st.columns(2)
+            with summary_col1:
+                st.metric(label("classify_ai_review_section"), len(ai_df))
+            with summary_col2:
+                st.metric(label("classify_rule_matched_section"), len(rule_df))
+
+            st.markdown("#### " + label("classify_ai_review_section"))
+            filter_col1, filter_col2, filter_col3 = st.columns([1.1, 1, 1.5])
             with filter_col1:
-                focus_mode = st.selectbox(
-                    label("classify_review_focus"),
-                    ["all", "ai_only", "ai_review", "rule_only"],
+                review_mode = st.selectbox(
+                    label("classify_ai_review_mode"),
+                    ["all", "low_conf", "missing_accounts"],
                     format_func=lambda mode: {
-                        "all": label("classify_focus_all"),
-                        "ai_only": label("classify_focus_ai_only"),
-                        "ai_review": label("classify_focus_ai_review"),
-                        "rule_only": label("classify_focus_rule_only"),
+                        "all": label("classify_ai_review_mode_all"),
+                        "low_conf": label("classify_ai_review_mode_low_conf"),
+                        "missing_accounts": label("classify_ai_review_mode_missing"),
                     }.get(mode, mode),
-                    key="classify_review_focus_mode",
+                    key="classify_ai_review_mode",
                 )
             with filter_col2:
                 ai_conf_threshold = st.slider(
@@ -319,72 +564,246 @@ def render():
                     key="classify_filter_keyword",
                 )
 
-            filtered_df = _apply_classification_filters(
-                full_df,
-                focus_mode=focus_mode,
-                ai_conf_threshold=ai_conf_threshold,
+            filtered_ai_df = _filter_ai_review_rows(
+                ai_df,
+                review_mode=review_mode,
+                threshold=ai_conf_threshold,
                 keyword=keyword,
-            )
-            visible_ai_count = (
-                filtered_df["source"].astype(str).str.lower().eq("ai").sum()
-                if not filtered_df.empty else 0
             )
             st.caption(
                 label(
-                    "classify_filter_summary",
-                    visible=len(filtered_df),
-                    total=len(full_df),
-                    ai=visible_ai_count,
+                    "classify_ai_review_summary",
+                    visible=len(filtered_ai_df),
+                    total=len(ai_df),
                 )
             )
 
-            # Display editable table
-            account_options = build_account_options(
-                st.session_state.get("chart_of_accounts", ""),
-                full_df.to_dict("records"),
-            )
-            edited_df = st.data_editor(
-                filtered_df,
-                num_rows="dynamic",
-                width="stretch",
-                column_config={
-                    "id": None,
-                    "peer": st.column_config.TextColumn(t("payee"), width="medium"),
-                    "item": st.column_config.TextColumn(t("item_label"), width="medium"),
-                    "amount": st.column_config.NumberColumn(t("amount"), format="%.2f"),
-                    "targetAccount": st.column_config.SelectboxColumn(
-                        label("target_account"),
-                        options=account_options,
-                        required=True,
-                        width="large",
-                    ),
-                    "methodAccount": st.column_config.SelectboxColumn(
-                        label("method_account"),
-                        options=account_options,
-                        required=True,
-                        width="medium",
-                    ),
-                    "confidence": st.column_config.ProgressColumn(
-                        label("confidence"),
-                        help=t("confidence_help"),
-                        format="%.2f",
-                        min_value=0,
-                        max_value=1,
-                        width="small",
-                    ),
-                    "source": st.column_config.TextColumn(label("source"), width="small"),
-                },
-                hide_index=True,
-                key="classification_results_editor",
-            )
-            full_df = _merge_filtered_edits(full_df, edited_df)
+            if filtered_ai_df.empty:
+                st.info(label("classify_ai_review_empty"))
+            else:
+                edited_ai_df = st.data_editor(
+                    filtered_ai_df,
+                    num_rows="fixed",
+                    width="stretch",
+                    column_config={
+                        "id": None,
+                        "provider": None,
+                        "peer": st.column_config.TextColumn(t("payee"), width="medium"),
+                        "item": st.column_config.TextColumn(t("item_label"), width="medium"),
+                        "category": st.column_config.TextColumn(label("classify_category"), width="small"),
+                        "time": st.column_config.TextColumn(t("transaction_time"), width="small"),
+                        "amount": st.column_config.NumberColumn(t("amount"), format="%.2f"),
+                        "targetAccount": st.column_config.SelectboxColumn(
+                            label("target_account"),
+                            options=account_options,
+                            required=True,
+                            width="large",
+                        ),
+                        "methodAccount": st.column_config.SelectboxColumn(
+                            label("method_account"),
+                            options=account_options,
+                            required=True,
+                            width="medium",
+                        ),
+                        "confidence": st.column_config.ProgressColumn(
+                            label("confidence"),
+                            help=t("confidence_help"),
+                            format="%.2f",
+                            min_value=0,
+                            max_value=1,
+                            width="small",
+                        ),
+                        "source": st.column_config.TextColumn(label("source"), width="small"),
+                        "reasoning": st.column_config.TextColumn(label("reasoning"), width="large"),
+                    },
+                    disabled=[
+                        "peer",
+                        "item",
+                        "category",
+                        "time",
+                        "amount",
+                        "confidence",
+                        "source",
+                        "reasoning",
+                    ],
+                    hide_index=True,
+                    key="classification_ai_editor",
+                )
+                full_df = _merge_filtered_edits(full_df, edited_ai_df)
+
+            # Persist edits immediately.
             st.session_state.merged_data = full_df.to_dict("records")
+
+            # Recompute split after edits.
+            rule_df, ai_df = _split_rule_ai_rows(full_df)
             invalid_rows = _collect_invalid_account_rows(full_df)
 
-            # Save changes
             if st.button(label("save_changes"), width="stretch"):
-                # TODO: Save changes to backend
                 st.success(label("changes_saved"))
+
+            st.markdown("#### " + label("classify_ai_rule_suggestions_title"))
+            suggestion_col1, suggestion_col2 = st.columns([1, 2])
+            with suggestion_col1:
+                suggestion_min_confidence = st.slider(
+                    label("classify_suggestion_conf_threshold"),
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=0.9,
+                    step=0.05,
+                    key="classify_suggestion_conf_threshold",
+                )
+            with suggestion_col2:
+                st.caption(label("classify_ai_rule_suggestions_hint"))
+
+            suggestions_df = _build_ai_rule_suggestions(
+                ai_df,
+                min_confidence=suggestion_min_confidence,
+            )
+            if suggestions_df.empty:
+                st.info(label("classify_ai_rule_suggestions_empty"))
+            else:
+                created_signatures = st.session_state.get("classify_created_rule_signatures", set())
+                if not isinstance(created_signatures, set):
+                    created_signatures = set()
+                existing_signatures = _load_existing_rule_signatures()
+                known_signatures = existing_signatures.union(created_signatures)
+                suggestions_df["exists"] = suggestions_df["signature"].isin(list(known_signatures))
+                suggestions_df["existsLabel"] = suggestions_df["exists"].map(
+                    lambda flag: (
+                        label("classify_rule_suggestion_existing")
+                        if bool(flag)
+                        else label("classify_rule_suggestion_new")
+                    )
+                )
+
+                suggestion_editor_df = st.data_editor(
+                    suggestions_df,
+                    num_rows="fixed",
+                    width="stretch",
+                    column_config={
+                        "select": st.column_config.CheckboxColumn(
+                            label("classify_rule_suggestion_select"),
+                            default=False,
+                        ),
+                        "id": None,
+                        "signature": None,
+                        "exists": None,
+                        "provider": st.column_config.TextColumn(t("provider_code"), width="small"),
+                        "matchField": st.column_config.TextColumn(
+                            label("classify_rule_suggestion_match_field"),
+                            width="small",
+                        ),
+                        "matchValue": st.column_config.TextColumn(
+                            label("classify_rule_suggestion_match_value"),
+                            width="large",
+                        ),
+                        "targetAccount": st.column_config.TextColumn(label("target_account"), width="large"),
+                        "methodAccount": st.column_config.TextColumn(label("method_account"), width="medium"),
+                        "confidence": st.column_config.ProgressColumn(
+                            label("confidence"),
+                            format="%.2f",
+                            min_value=0.0,
+                            max_value=1.0,
+                            width="small",
+                        ),
+                        "existsLabel": st.column_config.TextColumn(
+                            label("classify_rule_suggestion_status"),
+                            width="small",
+                        ),
+                        "reasoning": st.column_config.TextColumn(label("reasoning"), width="large"),
+                    },
+                    disabled=[
+                        "id",
+                        "provider",
+                        "matchField",
+                        "matchValue",
+                        "targetAccount",
+                        "methodAccount",
+                        "confidence",
+                        "reasoning",
+                        "existsLabel",
+                    ],
+                    hide_index=True,
+                    key="classification_ai_rule_suggestions_editor",
+                )
+
+                if st.button(label("classify_confirm_add_selected_rules"), type="primary", width="stretch"):
+                    selected_df = suggestion_editor_df[suggestion_editor_df["select"] == True]
+                    success_count = 0
+                    duplicate_count = 0
+                    error_count = 0
+
+                    for _, row in selected_df.iterrows():
+                        payload, signature = _build_rule_payload_from_suggestion(row.to_dict())
+                        if signature in known_signatures:
+                            duplicate_count += 1
+                            continue
+                        try:
+                            response = requests.post(
+                                get_api_url("/rules"),
+                                json=payload,
+                                timeout=get_api_timeout(),
+                            )
+                            if response.status_code in (200, 201):
+                                success_count += 1
+                                known_signatures.add(signature)
+                                created_signatures.add(signature)
+                            else:
+                                error_count += 1
+                        except Exception:
+                            error_count += 1
+
+                    st.session_state.classify_created_rule_signatures = created_signatures
+                    if success_count:
+                        st.success(
+                            label(
+                                "classify_rule_suggestion_add_result",
+                                success=success_count,
+                                duplicates=duplicate_count,
+                                failed=error_count,
+                            )
+                        )
+                        st.rerun()
+                    elif duplicate_count or error_count:
+                        st.warning(
+                            label(
+                                "classify_rule_suggestion_add_result",
+                                success=success_count,
+                                duplicates=duplicate_count,
+                                failed=error_count,
+                            )
+                        )
+
+            st.markdown("#### " + label("classify_rule_matched_section"))
+            if rule_df.empty:
+                st.info(label("classify_rule_match_empty"))
+            else:
+                st.caption(label("classify_rule_match_summary", count=len(rule_df)))
+                st.dataframe(
+                    rule_df,
+                    width="stretch",
+                    hide_index=True,
+                    column_config={
+                        "id": None,
+                        "provider": None,
+                        "peer": st.column_config.TextColumn(t("payee"), width="medium"),
+                        "item": st.column_config.TextColumn(t("item_label"), width="medium"),
+                        "category": st.column_config.TextColumn(label("classify_category"), width="small"),
+                        "time": st.column_config.TextColumn(t("transaction_time"), width="small"),
+                        "amount": st.column_config.NumberColumn(t("amount"), format="%.2f"),
+                        "targetAccount": st.column_config.TextColumn(label("target_account"), width="large"),
+                        "methodAccount": st.column_config.TextColumn(label("method_account"), width="medium"),
+                        "confidence": st.column_config.ProgressColumn(
+                            label("confidence"),
+                            format="%.2f",
+                            min_value=0.0,
+                            max_value=1.0,
+                            width="small",
+                        ),
+                        "source": st.column_config.TextColumn(label("source"), width="small"),
+                        "reasoning": st.column_config.TextColumn(label("reasoning"), width="large"),
+                    },
+                )
 
             # Generate Beancount file button
             st.markdown("---")
@@ -401,17 +820,14 @@ def render():
                 ):
                     with st.spinner(label("generating")):
                         try:
-                            import requests
                             generate_df = full_df.copy()
                             generate_df["account"] = generate_df.get("targetAccount", "Expenses:Misc")
 
-                            # Prepare request data
                             request_data = {
                                 "transactions": generate_df.to_dict("records"),
                                 "provider": st.session_state.get("data_source", "alipay"),
                             }
 
-                            # Call API
                             response = requests.post(
                                 get_api_url("/generate"),
                                 json=request_data,
@@ -423,8 +839,6 @@ def render():
 
                                 if result["success"]:
                                     st.success(label("generate_success"))
-
-                                    # Download button
                                     st.download_button(
                                         label=label("download_beancount"),
                                         data=result["beancount_file"],
@@ -433,7 +847,7 @@ def render():
                                         width="stretch",
                                     )
                                 else:
-                                    st.error(label("generate_failed", message=result['message']))
+                                    st.error(label("generate_failed", message=result["message"]))
                             else:
                                 st.error(label("generate_failed", message=response.text))
 
@@ -477,7 +891,6 @@ def render():
 
             with col2:
                 if st.button(label("preview"), width="stretch"):
-                    # Preview Beancount format
                     preview = generate_beancount_preview(full_df)
                     st.code(preview, language="text")
 
@@ -518,6 +931,7 @@ def merge_transactions_and_classifications(transactions, classifications):
 
         merged.append({
             "id": tx_id,
+            "provider": tx.get("provider", ""),
             "peer": tx.get("peer", ""),
             "item": tx.get("item", ""),
             "category": tx.get("category", ""),
@@ -530,7 +944,7 @@ def merge_transactions_and_classifications(transactions, classifications):
             ),
             "methodAccount": classification.get("methodAccount", ""),
             "confidence": classification.get("confidence", 0),
-            "reasoning": classification.get("reasoning", ""),
+            "reasoning": _localize_reasoning_text(classification.get("reasoning", "")),
             "source": classification.get("source", "ai"),
         })
 

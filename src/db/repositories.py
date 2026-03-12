@@ -365,7 +365,7 @@ class RuleRepository:
 
         for rule in rules:
             conditions = json.loads(rule.conditions)
-            if conditions.get("skip") is True or conditions.get("_deg_only") is True:
+            if conditions.get("skip") is True:
                 continue
             match = True
 

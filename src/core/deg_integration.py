@@ -4,6 +4,9 @@ double-entry-generator integration module
 
 import subprocess
 import tempfile
+import json
+import ast
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any
 import csv
@@ -62,6 +65,94 @@ class DoubleEntryGenerator:
             return float(value)
         except (TypeError, ValueError):
             return 0.0
+
+    @staticmethod
+    def _extract_raw_fields(transaction: Dict[str, Any]) -> Dict[str, str]:
+        """Extract transaction raw_data to a normalized text dictionary."""
+        raw_data = transaction.get("raw_data")
+        parsed: Any = {}
+
+        if isinstance(raw_data, dict):
+            parsed = raw_data
+        elif isinstance(raw_data, str) and raw_data.strip():
+            try:
+                parsed = json.loads(raw_data)
+            except Exception:
+                try:
+                    parsed = ast.literal_eval(raw_data)
+                except Exception:
+                    parsed = {}
+
+        if not isinstance(parsed, dict):
+            return {}
+
+        normalized: Dict[str, str] = {}
+        for key, value in parsed.items():
+            normalized[str(key).strip()] = "" if value is None else str(value).strip()
+
+        # Legacy malformed Alipay rows from early parser versions:
+        # {"-----": "2025-..", "None": [交易分类, 交易对方, ..., 收/付款方式, ...]}
+        legacy_values = parsed.get("None")
+        if isinstance(legacy_values, str):
+            try:
+                maybe_list = ast.literal_eval(legacy_values)
+                if isinstance(maybe_list, list):
+                    legacy_values = maybe_list
+            except Exception:
+                legacy_values = None
+        if isinstance(legacy_values, list):
+            legacy_headers = [
+                "交易分类",
+                "交易对方",
+                "对方账号",
+                "商品说明",
+                "收/支",
+                "金额",
+                "收/付款方式",
+                "交易状态",
+                "交易订单号",
+                "商家订单号",
+                "备注",
+            ]
+            for idx, header in enumerate(legacy_headers):
+                if idx >= len(legacy_values):
+                    break
+                text = str(legacy_values[idx] or "").strip()
+                if text:
+                    normalized.setdefault(header, text)
+
+            for key, value in parsed.items():
+                key_text = str(key or "").strip()
+                value_text = str(value or "").strip()
+                if key_text == "None" or not value_text:
+                    continue
+                if re.search(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", value_text):
+                    normalized.setdefault("交易时间", value_text)
+                    break
+
+        return normalized
+
+    @classmethod
+    def _pick_value(
+        cls,
+        tx: Dict[str, Any],
+        raw_fields: Dict[str, str],
+        keys: list[str],
+        default: str = "",
+    ) -> str:
+        """Pick first non-empty value from top-level tx and raw_data fields."""
+        for key in keys:
+            top = tx.get(key)
+            if top is not None:
+                text = str(top).strip()
+                if text:
+                    return text
+            raw = raw_fields.get(key)
+            if raw is not None:
+                text = str(raw).strip()
+                if text:
+                    return text
+        return default
 
     def call_double_entry_generator(
         self,
@@ -278,52 +369,109 @@ class DoubleEntryGenerator:
             writer.writeheader()
 
             for tx in transactions:
+                raw_fields = self._extract_raw_fields(tx if isinstance(tx, dict) else {})
                 row = {}
                 for field in fieldnames:
                     # Map field names
                     if field == "交易时间" or field == "time":
-                        row[field] = tx.get("time", "")
+                        row[field] = self._pick_value(
+                            tx, raw_fields, ["time", "交易时间", "交易日期", "记账日期", "日期"], default=""
+                        )
                     elif field == "交易分类":
-                        row[field] = tx.get("category", "") or tx.get("item", "")
+                        row[field] = self._pick_value(
+                            tx,
+                            raw_fields,
+                            ["category", "交易分类", "消费分类", "分类", "类型", "item", "商品说明"],
+                            default="",
+                        )
                     elif field == "商品说明" or field == "商品" or field == "item":
-                        row[field] = tx.get("item", "")
+                        row[field] = self._pick_value(
+                            tx,
+                            raw_fields,
+                            ["item", "商品说明", "商品", "摘要", "备注", "交易描述"],
+                            default="",
+                        )
                     elif field == "收/支" or field == "type":
-                        row[field] = tx.get("type", "")
+                        row[field] = self._pick_value(
+                            tx, raw_fields, ["type", "收/支", "交易类型", "借贷标志", "借贷方向"], default=""
+                        )
                     elif field == "金额" or field == "金额(元)" or field == "amount":
-                        row[field] = tx.get("amount", "")
+                        row[field] = self._pick_value(
+                            tx,
+                            raw_fields,
+                            ["amount", "金额", "金额(元)", "交易金额", "支出金额", "收入金额"],
+                            default="",
+                        )
                     elif field == "交易对方" or field == "peer":
-                        row[field] = tx.get("peer", "")
+                        row[field] = self._pick_value(
+                            tx, raw_fields, ["peer", "交易对方", "对方户名", "商户名称", "收款方", "付款方"], default=""
+                        )
                     elif field == "交易状态" or field == "当前状态" or field == "status":
-                        row[field] = tx.get("status", "交易成功")
+                        row[field] = self._pick_value(
+                            tx, raw_fields, ["status", "交易状态", "当前状态", "状态"], default="交易成功"
+                        )
                     elif field == "对方账号":
-                        row[field] = tx.get("peer_account", "/") or "/"
+                        row[field] = self._pick_value(
+                            tx, raw_fields, ["peer_account", "对方账号", "对方账户"], default="/"
+                        ) or "/"
                     elif field == "收/付款方式":
-                        row[field] = tx.get("method", "")
+                        row[field] = self._pick_value(
+                            tx,
+                            raw_fields,
+                            ["method", "收/付款方式", "支付方式", "付款方式", "支付渠道"],
+                            default="",
+                        )
                     elif field == "交易订单号":
-                        row[field] = tx.get("transaction_id", "") or tx.get("order_id", "")
+                        row[field] = self._pick_value(
+                            tx,
+                            raw_fields,
+                            ["transaction_id", "交易订单号", "order_id", "订单号"],
+                            default="",
+                        )
                     elif field == "商家订单号":
-                        row[field] = tx.get("merchant_order_id", "")
+                        row[field] = self._pick_value(
+                            tx,
+                            raw_fields,
+                            ["merchant_order_id", "商家订单号"],
+                            default="",
+                        )
                     elif field == "备注":
-                        row[field] = tx.get("note", "")
+                        row[field] = self._pick_value(tx, raw_fields, ["note", "备注"], default="")
                     elif field == "交易日期":
-                        row[field] = tx.get("time", "")
+                        row[field] = self._pick_value(
+                            tx, raw_fields, ["time", "交易日期", "交易时间", "记账日期"], default=""
+                        )
                     elif field == "摘要":
-                        row[field] = tx.get("item", "") or tx.get("category", "")
+                        row[field] = self._pick_value(
+                            tx, raw_fields, ["item", "摘要", "交易摘要", "category", "交易分类", "消费分类"], default=""
+                        )
                     elif field == "借贷标志":
-                        tx_type = str(tx.get("type", ""))
+                        tx_type = self._pick_value(
+                            tx, raw_fields, ["type", "收/支", "交易类型", "借贷标志"], default=""
+                        )
                         row[field] = "贷" if any(k in tx_type for k in ("收", "入", "贷")) else "借"
                     elif field == "收入金额":
-                        amount = self._to_float(tx.get("amount", 0) or 0)
-                        tx_type = str(tx.get("type", ""))
+                        amount = self._to_float(
+                            self._pick_value(tx, raw_fields, ["amount", "收入金额", "金额", "交易金额"], default="0")
+                        )
+                        tx_type = self._pick_value(
+                            tx, raw_fields, ["type", "收/支", "交易类型", "借贷标志"], default=""
+                        )
                         is_income = amount > 0 and any(k in tx_type for k in ("收", "入", "贷"))
                         row[field] = f"{amount:.2f}" if is_income else ""
                     elif field == "支出金额":
-                        amount = self._to_float(tx.get("amount", 0) or 0)
-                        tx_type = str(tx.get("type", ""))
+                        amount = self._to_float(
+                            self._pick_value(tx, raw_fields, ["amount", "支出金额", "金额", "交易金额"], default="0")
+                        )
+                        tx_type = self._pick_value(
+                            tx, raw_fields, ["type", "收/支", "交易类型", "借贷标志"], default=""
+                        )
                         is_income = amount > 0 and any(k in tx_type for k in ("收", "入", "贷"))
                         row[field] = "" if is_income else f"{abs(amount):.2f}"
                     elif field == "对方户名":
-                        row[field] = tx.get("peer", "")
+                        row[field] = self._pick_value(
+                            tx, raw_fields, ["peer", "对方户名", "交易对方", "收款人", "付款人"], default=""
+                        )
                 writer.writerow(row)
 
     def _write_default_config(

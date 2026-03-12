@@ -50,6 +50,7 @@ class ClassificationRequest(BaseModel):
     )
     chart_of_accounts: str = Field(..., description="Chart of accounts")
     provider: str = Field(default="deepseek", description="AI Provider")
+    language: str = Field(default="en", description="UI language, e.g. en/zh")
 
 
 class ClassificationResult(BaseModel):
