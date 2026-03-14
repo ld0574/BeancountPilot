@@ -1,5 +1,3 @@
-# BeancountPilot
-
 <p align="center">
   <img src="docs/beanlogo.png" alt="BeancountPilot" width="360">
 </p>
