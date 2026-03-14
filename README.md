@@ -2,7 +2,6 @@
 
 <p align="center">
   <img src="docs/beanlogo.png" alt="BeancountPilot" width="360">
-  <img src="docs/beanicon.png" alt="Bean Icon" width="72">
 </p>
 
 > AI-powered intelligent transaction classification and workflow enhancement tool designed for Beancount users.
