@@ -1,5 +1,10 @@
 # BeancountPilot
 
+<p align="center">
+  <img src="docs/beanlogo.png" alt="BeancountPilot" width="360">
+  <img src="docs/beanicon.png" alt="Bean Icon" width="72">
+</p>
+
 > AI 增强的智能交易分类和工作流增强工具，专为 Beancount 用户设计。
 
 [English Documentation](README.md)

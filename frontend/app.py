@@ -10,6 +10,8 @@ import requests
 
 # Ensure project root is importable when launched from frontend/.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+BRAND_LOGO_PATH = PROJECT_ROOT / "docs" / "beanlogo.png"
+BRAND_ICON_PATH = PROJECT_ROOT / "docs" / "beanicon.png"
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -21,7 +23,7 @@ init_i18n()
 # Page configuration
 st.set_page_config(
     page_title="BeancountPilot",
-    page_icon=None,
+    page_icon=str(BRAND_ICON_PATH),
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -134,6 +136,50 @@ st.markdown(
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #f9f2e2 0%, #f4ead5 55%, #efe2c8 100%);
         border-right: 1px solid #dfcba0;
+    }
+
+    [data-testid="stSidebarHeader"] {
+        display: none;
+    }
+
+    [data-testid="stSidebar"] > div:first-child {
+        padding-top: 0.6rem;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+        gap: 0.65rem;
+    }
+
+    [data-testid="stSidebar"] .stElementContainer {
+        margin: 0 !important;
+    }
+
+    [data-testid="stSidebar"] .stMarkdown,
+    [data-testid="stSidebar"] .stButton,
+    [data-testid="stSidebar"] .stSelectbox,
+    [data-testid="stSidebar"] [data-testid="stImage"] {
+        margin: 0 !important;
+    }
+
+    [data-testid="stSidebar"] hr {
+        margin-top: 0.35rem;
+        margin-bottom: 1.1rem;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {
+        margin-top: 0.6rem;
+    }
+
+    .sidebar-lang-spacer {
+        display: block;
+        height: 0.6rem;
+    }
+
+    .sidebar-lang-label {
+        color: #4e5f87;
+        font-size: 0.88rem;
+        font-weight: 600;
+        padding-top: 0.35rem;
     }
 
     .sidebar-brand {
@@ -466,7 +512,7 @@ st.markdown(
 
 # Sidebar — navigation + language only
 with st.sidebar:
-    st.markdown('<div class="sidebar-brand">BeancountPilot</div>', unsafe_allow_html=True)
+    st.image(str(BRAND_LOGO_PATH), use_container_width=True)
     st.markdown("---")
 
     # Page navigation (button-based)
@@ -494,14 +540,24 @@ with st.sidebar:
     st.markdown("---")
 
     # Language switcher
+    st.markdown('<div class="sidebar-lang-spacer"></div>', unsafe_allow_html=True)
     lang_options = get_language_options()
+    lang_labels = [lang_label for _, lang_label in lang_options]
     current_lang_index = 0 if st.session_state.language == "en" else 1
-    selected_lang = st.selectbox(
-        label("language"),
-        [label for _, label in lang_options],
-        index=current_lang_index,
-    )
-    new_lang = lang_options[[label for _, label in lang_options].index(selected_lang)][0]
+    lang_label_col, lang_select_col = st.columns([1.1, 1.6])
+    with lang_label_col:
+        st.markdown(
+            f'<div class="sidebar-lang-label">{label("language")}</div>',
+            unsafe_allow_html=True,
+        )
+    with lang_select_col:
+        selected_lang = st.selectbox(
+            "",
+            lang_labels,
+            index=current_lang_index,
+            label_visibility="collapsed",
+        )
+    new_lang = lang_options[lang_labels.index(selected_lang)][0]
     if new_lang != st.session_state.language:
         set_language(new_lang)
         st.rerun()
