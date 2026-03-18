@@ -65,8 +65,7 @@ if "data_source" not in st.session_state:
     st.session_state.data_source = "alipay"
 if "api_key" not in st.session_state:
     st.session_state.api_key = ""
-if "chart_of_accounts" not in st.session_state:
-    st.session_state.chart_of_accounts = """Assets:Bank:Alipay
+DEFAULT_CHART_OF_ACCOUNTS = """Assets:Bank:Alipay
 Assets:Bank:WeChat
 Assets:Bank:Cash
 Expenses:Food:Dining
@@ -92,6 +91,28 @@ Equity:OpeningBalances
 Income:Salary
 Income:Investment
 Income:Other"""
+
+
+def _load_chart_of_accounts() -> str:
+    """Load chart of accounts from backend; fallback to defaults."""
+    try:
+        timeout = min(get_api_timeout(), 3)
+        response = requests.get(
+            get_api_url("/config/chart-of-accounts"),
+            timeout=timeout,
+        )
+        if response.status_code == 200:
+            payload = response.json()
+            value = payload.get("chart_of_accounts")
+            if isinstance(value, str) and value.strip():
+                return value
+    except Exception:
+        pass
+    return DEFAULT_CHART_OF_ACCOUNTS
+
+
+if "chart_of_accounts" not in st.session_state:
+    st.session_state.chart_of_accounts = _load_chart_of_accounts()
 
 # Custom CSS
 st.markdown(
@@ -512,7 +533,7 @@ st.markdown(
 
 # Sidebar — navigation + language only
 with st.sidebar:
-    st.image(str(BRAND_LOGO_PATH), use_container_width=True)
+    st.image(str(BRAND_LOGO_PATH), width=220)
     st.markdown("---")
 
     # Page navigation (button-based)
@@ -552,7 +573,7 @@ with st.sidebar:
         )
     with lang_select_col:
         selected_lang = st.selectbox(
-            "",
+            label("language"),
             lang_labels,
             index=current_lang_index,
             label_visibility="collapsed",

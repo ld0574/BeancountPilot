@@ -328,6 +328,20 @@ def _sync_chart_from_ledger_files(ledger_dir: Path) -> list[str]:
     return merged_accounts
 
 
+def _save_chart_of_accounts(chart_of_accounts: str) -> bool:
+    """Persist chart of accounts to backend configuration."""
+    try:
+        timeout = min(get_api_timeout(), 5)
+        response = requests.put(
+            get_api_url("/config/chart-of-accounts"),
+            json={"chart_of_accounts": chart_of_accounts},
+            timeout=timeout,
+        )
+        return response.status_code == 200
+    except Exception:
+        return False
+
+
 def _render_open_lines(accounts: list[str]) -> list[str]:
     """Render accounts to default open lines."""
     return [f"2010-01-01 open {account} CNY" for account in accounts]
@@ -826,7 +840,10 @@ def render():
         if sync_from_ledger_clicked:
             accounts = _sync_chart_from_ledger_files(ledger_dir)
             if accounts:
-                st.session_state.chart_of_accounts = "\n".join(accounts)
+                new_chart = "\n".join(accounts)
+                st.session_state.chart_of_accounts = new_chart
+                if not _save_chart_of_accounts(new_chart):
+                    st.warning(label("backend_not_connected"))
                 st.success(label("synced_from_ledger_files", count=len(accounts)))
                 st.rerun()
             else:
@@ -835,6 +852,8 @@ def render():
         if sync_to_ledger_clicked:
             accounts = _parse_chart_accounts(chart_of_accounts)
             _sync_ledger_files_from_chart_accounts(ledger_dir, accounts)
+            if not _save_chart_of_accounts(chart_of_accounts):
+                st.warning(label("backend_not_connected"))
             st.success(label("synced_to_ledger_files", count=len(accounts)))
 
         st.markdown("---")
@@ -869,6 +888,8 @@ def render():
                 selected_ledger_path.write_text(st.session_state.get(editor_key, ""), encoding="utf-8")
                 synced_accounts = _sync_chart_from_ledger_files(ledger_dir)
                 st.session_state.chart_of_accounts = "\n".join(synced_accounts)
+                if not _save_chart_of_accounts(st.session_state.chart_of_accounts):
+                    st.warning(label("backend_not_connected"))
                 st.success(label("ledger_file_saved", filename=selected_ledger_file))
 
         with action_col2:
@@ -891,6 +912,8 @@ def render():
                 st.session_state[editor_key] = imported_content
                 synced_accounts = _sync_chart_from_ledger_files(ledger_dir)
                 st.session_state.chart_of_accounts = "\n".join(synced_accounts)
+                if not _save_chart_of_accounts(st.session_state.chart_of_accounts):
+                    st.warning(label("backend_not_connected"))
                 st.success(label("ledger_file_imported", filename=selected_ledger_file))
             except Exception as e:
                 st.error(label("ledger_file_import_failed", error=str(e)))

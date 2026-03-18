@@ -12,6 +12,7 @@ from src.api.routes import (
     knowledge,
     ws,
     ai_config,
+    chart_of_accounts,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "knowledge",
     "ws",
     "ai_config",
+    "chart_of_accounts",
 ]
