@@ -30,7 +30,8 @@ class OpenAIProvider(BaseLLMProvider):
         self.retry_min_delay = float(config.get("retry_min_delay", 1.0))
         self.retry_max_delay = float(config.get("retry_max_delay", 20.0))
         self.retry_backoff = float(config.get("retry_backoff", 2.0))
-        self.max_concurrency = max(1, int(config.get("max_concurrency", 3)))
+        self.max_concurrency = max(1, int(config.get("max_concurrency", 1)))
+        self.batch_size = max(1, int(config.get("batch_size", 10)))
 
     def _get_retry_after(self, exc: Exception) -> Optional[float]:
         if isinstance(exc, APIStatusError) and getattr(exc, "response", None) is not None:
@@ -144,53 +145,49 @@ class OpenAIProvider(BaseLLMProvider):
         Returns:
             List of classification results
         """
-        # If transaction count is small, use batch prompt
-        if len(transactions) <= 10:
-            # Build batch prompt
+        async def _batch_call(batch: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             prompt = build_batch_classification_prompt(
-                transactions, chart_of_accounts, historical_rules, language=language
+                batch, chart_of_accounts, historical_rules, language=language
             )
-
-            try:
-                # Call API
-                async def _call():
-                    return await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": "You are a professional financial accounting assistant, responsible for classifying transactions into Beancount accounts.",
-                            },
-                            {"role": "user", "content": prompt},
-                        ],
-                        temperature=self.temperature,
-                        max_tokens=1000,
-                    )
-                response = await self._with_retry(_call)
-
-                # Parse response
-                content = response.choices[0].message.content
-                results = parse_batch_classification_response(content)
-
-                # Ensure result count matches
-                if len(results) != len(transactions):
-                    # Mismatch, classify one by one
-                    return await self._classify_one_by_one(
-                        transactions, chart_of_accounts, historical_rules, language=language
-                    )
-
-                return results
-
-            except Exception as e:
-                # Error handling, classify one by one
-                return await self._classify_one_by_one(
-                    transactions, chart_of_accounts, historical_rules, language=language
+            async def _call():
+                return await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a professional financial accounting assistant, responsible for classifying transactions into Beancount accounts.",
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=self.temperature,
+                    max_tokens=1000,
                 )
-        else:
-            # Large number of transactions, classify one by one
+            response = await self._with_retry(_call)
+            content = response.choices[0].message.content
+            results = parse_batch_classification_response(content)
+            if len(results) != len(batch):
+                return await self._classify_one_by_one(
+                    batch, chart_of_accounts, historical_rules, language=language
+                )
+            return results
+
+        if self.batch_size <= 1:
             return await self._classify_one_by_one(
                 transactions, chart_of_accounts, historical_rules, language=language
             )
+
+        aggregated: List[Dict[str, Any]] = []
+        for start in range(0, len(transactions), self.batch_size):
+            batch = transactions[start : start + self.batch_size]
+            try:
+                batch_results = await _batch_call(batch)
+            except Exception:
+                batch_results = await self._classify_one_by_one(
+                    batch, chart_of_accounts, historical_rules, language=language
+                )
+            aggregated.extend(batch_results)
+
+        return aggregated
 
     async def _classify_one_by_one(
         self,

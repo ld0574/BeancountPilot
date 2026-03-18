@@ -48,36 +48,63 @@ def _localize_reasoning_text(reasoning: str) -> str:
     return text
 
 
-def _run_classification(transactions) -> bool:
-    """Run backend classification and sync session state."""
-    request_data = {
-        "transactions": transactions,
-        "chart_of_accounts": st.session_state.get("chart_of_accounts", ""),
-        "provider": st.session_state.get("provider", "deepseek"),
-        "language": get_current_language(),
-    }
+CLASSIFY_BATCH_SIZE = 10
 
-    response = requests.post(
-        get_api_url("/classify"),
-        json=request_data,
-        params={"provider": st.session_state.get("provider", "deepseek")},
-        timeout=get_api_timeout(),
-    )
 
-    if response.status_code != 200:
-        st.error(label("classify_failed", error=response.text))
+def _run_classification_with_progress(transactions) -> bool:
+    """Run backend classification in batches with real progress updates."""
+    total = len(transactions)
+    if total == 0:
+        st.warning(label("no_transactions_warning"))
         return False
 
-    result = response.json()
-    classifications = result["results"]
-    st.session_state.classifications = classifications
-    st.session_state.merged_data = merge_transactions_and_classifications(
-        transactions,
-        classifications,
-    )
-    st.session_state.auto_classify_pending = False
-    st.success(label("classify_complete", count=len(classifications)))
-    return True
+    progress = st.progress(0, text=f"{label('home_pipeline_progress')}: 0%")
+    processed = 0
+    classifications: list[dict] = []
+
+    ok = False
+    try:
+        for start in range(0, total, CLASSIFY_BATCH_SIZE):
+            batch = transactions[start : start + CLASSIFY_BATCH_SIZE]
+            request_data = {
+                "transactions": batch,
+                "chart_of_accounts": st.session_state.get("chart_of_accounts", ""),
+                "provider": st.session_state.get("provider", "deepseek"),
+                "language": get_current_language(),
+            }
+
+            response = requests.post(
+                get_api_url("/classify"),
+                json=request_data,
+                params={"provider": st.session_state.get("provider", "deepseek")},
+                timeout=get_api_timeout(),
+            )
+
+            if response.status_code != 200:
+                st.error(label("classify_failed", error=response.text))
+                return False
+
+            result = response.json()
+            batch_results = result.get("results") or []
+            classifications.extend(batch_results)
+            processed += len(batch)
+            percent = int(round(processed / total * 100))
+            progress.progress(percent, text=f"{label('home_pipeline_progress')}: {percent}%")
+
+        st.session_state.classifications = classifications
+        st.session_state.merged_data = merge_transactions_and_classifications(
+            transactions,
+            classifications,
+        )
+        st.session_state.auto_classify_pending = False
+        st.success(label("classify_complete", count=len(classifications)))
+        ok = True
+        return True
+    finally:
+        if ok:
+            progress.progress(100, text=f"{label('home_pipeline_progress')}: 100%")
+        else:
+            progress.empty()
 
 
 def _account_issue(account: str) -> str:
@@ -493,7 +520,7 @@ def render():
     if st.session_state.get("auto_classify_pending", False):
         with st.spinner(label("classifying")):
             try:
-                if _run_classification(transactions):
+                if _run_classification_with_progress(transactions):
                     st.rerun()
                 st.session_state.auto_classify_pending = False
             except requests.exceptions.ConnectionError:
@@ -507,7 +534,7 @@ def render():
     if classify_button:
         with st.spinner(label("classifying")):
             try:
-                if _run_classification(transactions):
+                if _run_classification_with_progress(transactions):
                     st.rerun()
 
             except requests.exceptions.ConnectionError:
