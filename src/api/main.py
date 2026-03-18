@@ -16,6 +16,8 @@ from src.api.routes import (
     ws,
     ai_config,
     chart_of_accounts,
+    progress,
+    maintenance,
 )
 
 # Create FastAPI application
@@ -41,6 +43,8 @@ app.include_router(feedback.router, prefix="/api", tags=["feedback"])
 app.include_router(generate.router, prefix="/api", tags=["generate"])
 app.include_router(ai_config.router, prefix="/api", tags=["ai-config"])
 app.include_router(chart_of_accounts.router, prefix="/api", tags=["config"])
+app.include_router(progress.router, prefix="/api", tags=["progress"])
+app.include_router(maintenance.router, prefix="/api", tags=["maintenance"])
 app.include_router(rules.router, prefix="/api", tags=["rules"])
 app.include_router(users.router, prefix="/api", tags=["users"])
 app.include_router(knowledge.router, prefix="/api", tags=["knowledge"])

@@ -85,7 +85,7 @@ Expenses:Education:Books
 Expenses:Education:Courses
 Expenses:Travel:Hotels
 Expenses:Travel:Transport
-Expenses:Misc
+Expenses:Other
 Liabilities:CreditCard:Bank:CMB:C1915
 Equity:OpeningBalances
 Income:Salary
@@ -111,8 +111,28 @@ def _load_chart_of_accounts() -> str:
     return DEFAULT_CHART_OF_ACCOUNTS
 
 
+def _load_classification_progress() -> None:
+    """Load persisted classification progress from backend."""
+    try:
+        timeout = min(get_api_timeout(), 3)
+        response = requests.get(
+            get_api_url("/progress/classification"),
+            timeout=timeout,
+        )
+        if response.status_code == 200:
+            payload = response.json()
+            st.session_state.persisted_tx_count = int(payload.get("total_transactions", 0))
+            st.session_state.persisted_classified_count = int(payload.get("classified_transactions", 0))
+    except Exception:
+        pass
+
+
 if "chart_of_accounts" not in st.session_state:
     st.session_state.chart_of_accounts = _load_chart_of_accounts()
+
+if "persisted_progress_loaded" not in st.session_state:
+    _load_classification_progress()
+    st.session_state.persisted_progress_loaded = True
 
 # Custom CSS
 st.markdown(

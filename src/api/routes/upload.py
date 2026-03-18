@@ -167,35 +167,46 @@ async def upload_csv(
 
             # Map fields based on provider
             if provider == "alipay":
-                peer = row.get("交易对方", "")
-                item = row.get("商品说明", "")
+                peer = _pick_first(row, ["交易对方", "Counterparty"])
+                item = _pick_first(row, ["商品说明", "Description", "Item"], default=peer)
                 category = _pick_first(
                     row,
-                    ["消费分类", "交易分类", "分类", "category"],
-                    default=row.get("商品说明", ""),
+                    ["消费分类", "交易分类", "分类", "category", "Transaction Category"],
+                    default=item,
                 )
-                transaction_type = row.get("收/支", "")
-                time = row.get("交易时间", "")
-                amount = _parse_amount(row.get("金额", "0"))
+                transaction_type = _pick_first(row, ["收/支", "Income/Expense", "Type"])
+                time = _pick_first(row, ["交易时间", "Transaction Time", "Time"])
+                amount = _parse_amount(
+                    _pick_first(row, ["金额", "Amount", "amount"], default="0")
+                )
                 normalized_row["category"] = category
                 normalized_row["method"] = _pick_first(
                     row,
-                    ["收/付款方式", "支付方式", "付款方式", "支付渠道", "method"],
+                    [
+                        "收/付款方式",
+                        "支付方式",
+                        "付款方式",
+                        "支付渠道",
+                        "method",
+                        "Payment Method",
+                    ],
                 )
                 normalized_row["status"] = _pick_first(
                     row,
-                    ["交易状态", "状态", "当前状态", "status"],
+                    ["交易状态", "状态", "当前状态", "status", "Transaction Status"],
                 )
             elif provider == "wechat":
-                peer = row.get("交易对方", "")
-                item = row.get("商品", "")
-                category = row.get("商品", "")
-                transaction_type = row.get("收/支", "")
-                time = row.get("交易时间", "")
-                amount = _parse_amount(row.get("金额(元)", "0"))
+                peer = _pick_first(row, ["交易对方", "Counterparty"])
+                item = _pick_first(row, ["商品", "Description", "Item"], default=peer)
+                category = _pick_first(row, ["商品", "Transaction Category", "Category"], default=item)
+                transaction_type = _pick_first(row, ["收/支", "Income/Expense", "Type"])
+                time = _pick_first(row, ["交易时间", "Transaction Time", "Time"])
+                amount = _parse_amount(
+                    _pick_first(row, ["金额(元)", "金额", "Amount", "amount"], default="0")
+                )
                 normalized_row["status"] = _pick_first(
                     row,
-                    ["当前状态", "交易状态", "状态", "status"],
+                    ["当前状态", "交易状态", "状态", "status", "Transaction Status"],
                 )
             elif is_bank_style_provider:
                 peer = _pick_first(
@@ -265,7 +276,9 @@ async def upload_csv(
                     row,
                     [
                         "peer",
+                        "Peer",
                         "交易对方",
+                        "Counterparty",
                         "对方户名",
                         "对方账户",
                         "商户名称",
@@ -275,24 +288,34 @@ async def upload_csv(
                 )
                 item = _pick_first(
                     row,
-                    ["item", "商品说明", "商品", "交易说明", "摘要", "备注", "交易描述"],
+                    [
+                        "item",
+                        "Item",
+                        "商品说明",
+                        "Description",
+                        "商品",
+                        "交易说明",
+                        "摘要",
+                        "备注",
+                        "交易描述",
+                    ],
                     default=peer,
                 )
                 category = _pick_first(
                     row,
-                    ["category", "交易分类", "消费分类", "分类", "类型"],
+                    ["category", "Category", "交易分类", "Transaction Category", "消费分类", "分类", "类型"],
                     default=item,
                 )
                 transaction_type = _pick_first(
                     row,
-                    ["type", "收/支", "交易类型", "借贷标志", "借贷方向"],
+                    ["type", "Type", "收/支", "Income/Expense", "交易类型", "借贷标志", "借贷方向"],
                 )
                 time = _pick_first(
                     row,
-                    ["time", "交易时间", "交易日期", "记账日期", "日期"],
+                    ["time", "Time", "交易时间", "Transaction Time", "交易日期", "记账日期", "日期"],
                 )
                 amount = 0.0
-                for key in ("amount", "金额", "金额(元)", "交易金额"):
+                for key in ("amount", "Amount", "金额", "金额(元)", "交易金额"):
                     raw_amount = str(row.get(key, "")).strip()
                     if raw_amount:
                         amount = _parse_amount(raw_amount)
@@ -335,9 +358,20 @@ async def upload_csv(
 
             transactions.append(transaction)
 
+        if not transactions:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No valid transactions parsed from file. "
+                    "Please verify the selected Data Source and file headers."
+                ),
+            )
+
         return transactions
 
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
         raise HTTPException(status_code=500, detail=f"File parsing failed: {str(e)}")
 
 

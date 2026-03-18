@@ -96,7 +96,7 @@ Expenses:Education:Books
 Expenses:Education:Courses
 Expenses:Travel:Hotels
 Expenses:Travel:Transport
-Expenses:Misc
+Expenses:Other
 Liabilities:CreditCard:Bank:CMB:C1915
 Equity:OpeningBalances
 Income:Salary

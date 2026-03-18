@@ -486,7 +486,7 @@ class DoubleEntryGenerator:
         provider = self._normalize_provider(provider)
         config = {
             "defaultMinusAccount": "Income:Other",
-            "defaultPlusAccount": "Expenses:Misc",
+            "defaultPlusAccount": "Expenses:Other",
             "defaultCurrency": "CNY",
             "title": "BeancountPilot",
             provider: {

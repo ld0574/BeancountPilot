@@ -36,7 +36,7 @@ class RuleEngine:
     }
     DEFAULT_DEG_CONFIG = {
         "defaultMinusAccount": "Income:Other",
-        "defaultPlusAccount": "Expenses:Misc",
+        "defaultPlusAccount": "Expenses:Other",
         "defaultCurrency": "CNY",
         "title": "BeancountPilot",
     }
@@ -490,7 +490,7 @@ class RuleEngine:
             or str(conditions.get("methodAccount", "")).strip()
             or str(conditions.get("commissionAccount", "")).strip()
             or str(conditions.get("pnlAccount", "")).strip()
-            or "Expenses:Misc"
+            or "Expenses:Other"
         )
 
         return {
@@ -611,41 +611,41 @@ class RuleEngine:
             "template_saved": True,
         }
 
-    def match_transaction(
+    def get_matching_rules(
         self,
-        peer: str,
-        item: str,
-        category: str,
-        provider: str = "",
-        raw_data: str = "",
-        tx_type: str = "",
-        tx_time: str = "",
-        tx_fields: Optional[Dict[str, Any]] = None,
+        transaction: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
-        """
-        Match applicable rules for a transaction
+        """Get all matching rules for one transaction (sorted by confidence desc)."""
+        tx = transaction or {}
+        provider = str(tx.get("provider", "") or "").strip().lower()
+        raw_data = tx.get("raw_data", "")
+        if isinstance(raw_data, dict):
+            tx_fields = {str(k): v for k, v in raw_data.items()}
+            raw_data_text = json.dumps(raw_data, ensure_ascii=False)
+        else:
+            raw_data_text = str(raw_data or "")
+            tx_fields = {}
+            if raw_data_text:
+                try:
+                    parsed = json.loads(raw_data_text)
+                    if isinstance(parsed, dict):
+                        tx_fields = {str(k): v for k, v in parsed.items()}
+                except Exception:
+                    tx_fields = {}
 
-        Args:
-            peer: Payee
-            item: Item
-            category: Category
-
-        Returns:
-            List of matched rules
-        """
         rules = RuleRepository.match_transaction(
             self.db,
-            peer=peer,
-            item=item,
-            category=category,
+            peer=str(tx.get("peer", "") or ""),
+            item=str(tx.get("item", "") or ""),
+            category=str(tx.get("category", "") or ""),
             provider=provider,
-            raw_data=raw_data,
-            tx_type=tx_type,
-            tx_time=tx_time,
-            tx_fields=tx_fields or {},
+            raw_data=raw_data_text,
+            tx_type=str(tx.get("type", "") or ""),
+            tx_time=str(tx.get("time", "") or ""),
+            tx_fields=tx_fields,
         )
 
-        return [
+        results = [
             {
                 "id": rule.id,
                 "name": rule.name,
@@ -656,6 +656,43 @@ class RuleEngine:
             }
             for rule in rules
         ]
+        return sorted(results, key=lambda r: float(r.get("confidence", 0.0)), reverse=True)
+
+    def match_transaction(
+        self,
+        peer: Any,
+        item: str = "",
+        category: str = "",
+        provider: str = "",
+        raw_data: str = "",
+        tx_type: str = "",
+        tx_time: str = "",
+        tx_fields: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Match the best rule for a transaction.
+
+        Backward-compatible usage:
+        - match_transaction(transaction_dict)
+        - match_transaction(peer, item, category, ...)
+        """
+        if isinstance(peer, dict):
+            matched = self.get_matching_rules(peer)
+            return matched[0] if matched else None
+
+        transaction = {
+            "peer": peer,
+            "item": item,
+            "category": category,
+            "provider": provider,
+            "raw_data": raw_data,
+            "type": tx_type,
+            "time": tx_time,
+        }
+        if tx_fields:
+            transaction["raw_data"] = tx_fields
+        matched = self.get_matching_rules(transaction)
+        return matched[0] if matched else None
 
     def export_rules_to_deg_format(self) -> str:
         """

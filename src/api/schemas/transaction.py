@@ -3,7 +3,7 @@ Transaction-related Pydantic models
 """
 
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from pydantic import BaseModel, Field
 
 
@@ -60,7 +60,7 @@ class ClassificationResult(BaseModel):
     account: str
     targetAccount: Optional[str] = None
     methodAccount: Optional[str] = None
-    confidence: float
+    confidence: float = Field(..., ge=0.0, le=1.0)
     reasoning: str
     source: str
 
@@ -76,9 +76,12 @@ class FeedbackRequest(BaseModel):
     """Feedback request model"""
 
     transaction_id: str
-    original_account: Optional[str]
-    corrected_account: Optional[str]
-    action: str = Field(..., description="Action type: accept, reject, modify")
+    original_account: Optional[str] = None
+    corrected_account: Optional[str] = None
+    action: Literal["accept", "reject", "modify"] = Field(
+        ...,
+        description="Action type: accept, reject, modify",
+    )
 
 
 class FeedbackResponse(BaseModel):

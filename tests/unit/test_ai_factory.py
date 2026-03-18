@@ -106,7 +106,7 @@ class TestRegisterProvider:
         """Test registering a new provider"""
         class CustomProvider(BaseLLMProvider):
             async def classify(self, transaction, chart_of_accounts, historical_rules):
-                return {"account": "Expenses:Misc", "confidence": 0.5, "reasoning": ""}
+                return {"account": "Expenses:Other", "confidence": 0.5, "reasoning": ""}
 
             async def batch_classify(self, transactions, chart_of_accounts, historical_rules):
                 return []
@@ -136,7 +136,7 @@ class TestRegisterProvider:
         """Test that registering provider overwrites existing one"""
         class NewProvider(BaseLLMProvider):
             async def classify(self, transaction, chart_of_accounts, historical_rules):
-                return {"account": "Expenses:Misc", "confidence": 0.5, "reasoning": ""}
+                return {"account": "Expenses:Other", "confidence": 0.5, "reasoning": ""}
 
             async def batch_classify(self, transactions, chart_of_accounts, historical_rules):
                 return []

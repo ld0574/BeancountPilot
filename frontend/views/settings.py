@@ -436,6 +436,7 @@ def render():
             default_profile_id, profiles = _load_ai_config()
             st.session_state.ai_profiles = profiles
             st.session_state.provider = default_profile_id
+            st.session_state.ai_default_profile_id = default_profile_id
             st.session_state.ai_config_loaded = True
 
         profiles = _normalize_ai_profiles(st.session_state.get("ai_profiles"))
@@ -481,7 +482,7 @@ def render():
             st.session_state.provider = profile["id"]
             st.rerun()
 
-        def _persist_ai_profiles(remaining_profiles: list[dict], selected_profile_id: str) -> None:
+        def _persist_ai_profiles(remaining_profiles: list[dict], selected_profile_id: str) -> bool:
             payload = {
                 "default_profile_id": selected_profile_id,
                 "profiles": remaining_profiles,
@@ -495,6 +496,7 @@ def render():
                 if response.status_code == 200:
                     st.session_state.ai_profiles = remaining_profiles
                     st.session_state.provider = selected_profile_id
+                    st.session_state.ai_default_profile_id = selected_profile_id
 
                     selected = next(
                         (p for p in remaining_profiles if p["id"] == selected_profile_id),
@@ -506,12 +508,14 @@ def render():
                     st.session_state.temperature = selected.get("temperature", 0.3)
                     st.session_state.timeout = selected.get("timeout", 30)
                     st.success(label("config_saved"))
+                    return True
                 else:
                     st.error(label("config_save_failed", error=response.text))
             except requests.exceptions.ConnectionError:
                 st.error(label("backend_not_connected"))
             except Exception as e:
                 st.error(label("config_save_failed", error=str(e)))
+            return False
 
         active_col1, active_col2 = st.columns([3.2, 1.0])
         with active_col1:
@@ -535,6 +539,14 @@ def render():
         if save_active_clicked:
             _persist_ai_profiles(profiles, active_profile_id)
             st.rerun()
+
+        saved_profile_id = st.session_state.get("ai_default_profile_id", current_profile_id)
+        last_autosave_attempt = st.session_state.get("ai_provider_autosave_attempt")
+        if active_profile_id != saved_profile_id and last_autosave_attempt != active_profile_id:
+            if _persist_ai_profiles(profiles, active_profile_id):
+                st.session_state.ai_provider_autosave_attempt = None
+            else:
+                st.session_state.ai_provider_autosave_attempt = active_profile_id
 
         st.markdown("---")
         st.subheader(label("multi_provider_config"))
@@ -2222,6 +2234,56 @@ def render():
         - **{t('db_type')}**: {t('db_type_value')}
         - **{t('db_status')}**: {t('db_status_value')}
         """)
+
+        # Data maintenance
+        st.markdown(f"### {label('data_maintenance')}")
+        st.caption(label("cleanup_history_help"))
+
+        if "cleanup_history_confirm" not in st.session_state:
+            st.session_state.cleanup_history_confirm = False
+
+        if not st.session_state.cleanup_history_confirm:
+            if st.button(label("cleanup_history"), width="stretch"):
+                st.session_state.cleanup_history_confirm = True
+                st.rerun()
+        else:
+            confirm_col, cancel_col = st.columns(2)
+            with confirm_col:
+                if st.button(
+                    label("cleanup_history_confirm"),
+                    type="primary",
+                    width="stretch",
+                ):
+                    try:
+                        response = requests.post(
+                            get_api_url("/maintenance/cleanup-history"),
+                            timeout=10,
+                        )
+                        if response.status_code == 200:
+                            result = response.json()
+                            st.session_state.transactions = []
+                            st.session_state.classifications = []
+                            st.session_state.merged_data = None
+                            st.session_state.persisted_tx_count = 0
+                            st.session_state.persisted_classified_count = 0
+                            st.success(
+                                label(
+                                    "cleanup_history_done",
+                                    transactions=result.get("transactions", 0),
+                                    classifications=result.get("classifications", 0),
+                                    feedbacks=result.get("feedbacks", 0),
+                                )
+                            )
+                        else:
+                            st.error(label("cleanup_history_failed", error=response.text))
+                    except Exception as e:
+                        st.error(label("cleanup_history_failed", error=str(e)))
+                    st.session_state.cleanup_history_confirm = False
+                    st.rerun()
+            with cancel_col:
+                if st.button(label("cleanup_history_cancel"), width="stretch"):
+                    st.session_state.cleanup_history_confirm = False
+                    st.rerun()
 
         # Version information
         st.markdown(f"### {label('version_info')}")

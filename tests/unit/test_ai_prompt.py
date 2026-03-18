@@ -177,7 +177,7 @@ End of response.'''
         result = parse_classification_response(response)
 
         # Should return default values
-        assert result["account"] == "Expenses:Misc"
+        assert result["account"] == "Expenses:Other"
         assert result["confidence"] == 0.0
         assert "Error" in result["reasoning"]
 
@@ -191,7 +191,7 @@ End of response.'''
 
         result = parse_classification_response(response)
 
-        assert result["account"] == "Expenses:Misc"
+        assert result["account"] == "Expenses:Other"
         assert result["confidence"] == 0.0
 
 

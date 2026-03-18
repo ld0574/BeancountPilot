@@ -166,7 +166,11 @@ class ClassificationRepository:
         )
 
     @staticmethod
-    def update_account(db: Session, classification_id: str, account: str) -> bool:
+    def update_account(
+        db: Session,
+        classification_id: str,
+        account: str,
+    ) -> Optional[Classification]:
         """Update classification account"""
         classification = (
             db.query(Classification)
@@ -177,8 +181,9 @@ class ClassificationRepository:
             classification.account = account
             classification.source = "user"
             db.commit()
-            return True
-        return False
+            db.refresh(classification)
+            return classification
+        return None
 
 
 class FeedbackRepository:
@@ -424,6 +429,28 @@ class RuleRepository:
                 if "/" not in tokens and not any(_time_matches(token, tx_minutes) for token in tokens):
                     match = False
 
+            # Backward-compatible time range condition: ["18:00", "22:00"].
+            if match and "time_range" in conditions:
+                raw_time_range = conditions["time_range"]
+                normalized_time_tokens: List[str] = []
+                if isinstance(raw_time_range, str):
+                    token = raw_time_range.strip()
+                    if token:
+                        normalized_time_tokens = [token]
+                elif isinstance(raw_time_range, list):
+                    parts = [str(v).strip() for v in raw_time_range if str(v).strip()]
+                    if len(parts) >= 2:
+                        normalized_time_tokens = [f"{parts[0]}-{parts[1]}"]
+                    else:
+                        normalized_time_tokens = parts
+
+                if (
+                    normalized_time_tokens
+                    and "/" not in normalized_time_tokens
+                    and not any(_time_matches(token, tx_minutes) for token in normalized_time_tokens)
+                ):
+                    match = False
+
             # Check transaction type conditions against normalized tx_type.
             if match and "type" in conditions:
                 type_conditions = conditions["type"]
@@ -466,6 +493,7 @@ class RuleRepository:
                     "type",
                     "txType",
                     "time",
+                    "time_range",
                     "sep",
                     "fullMatch",
                     "methodAccount",

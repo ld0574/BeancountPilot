@@ -13,6 +13,12 @@ def _reasoning_language_instruction(language: str = "en") -> str:
     return "Write `reasoning` in English."
 
 
+OUTPUT_CONSTRAINTS = """Output rules (must follow):
+- Return ONLY valid JSON. Do NOT include markdown fences, XML tags, or extra text.
+- Do NOT include thinking, analysis, or explanations outside the JSON fields.
+- Do NOT wrap JSON in quotes.
+"""
+
 # Default classification prompt template
 DEFAULT_CLASSIFICATION_PROMPT = """You are a professional financial accounting assistant, responsible for classifying transactions into Beancount accounts.
 
@@ -38,6 +44,7 @@ Rules:
 - Never output empty methodAccount.
 - {reasoning_language_instruction}
 - Keep reasoning concise (one short sentence).
+- {output_constraints}
 
 Output format (JSON):
 {{
@@ -70,6 +77,7 @@ Rules:
 - Never output empty methodAccount.
 - {reasoning_language_instruction}
 - Keep reasoning concise (one short sentence).
+- {output_constraints}
 
 Output format (JSON array):
 [
@@ -118,6 +126,7 @@ def build_classification_prompt(
         time=transaction.get("time", ""),
         amount=transaction.get("amount", ""),
         reasoning_language_instruction=_reasoning_language_instruction(language),
+        output_constraints=OUTPUT_CONSTRAINTS.strip(),
     )
 
 
@@ -162,6 +171,7 @@ def build_batch_classification_prompt(
         historical_rules=historical_rules,
         transactions=transactions_str,
         reasoning_language_instruction=_reasoning_language_instruction(language),
+        output_constraints=OUTPUT_CONSTRAINTS.strip(),
     )
 
 
@@ -190,7 +200,7 @@ def parse_classification_response(response: str) -> Dict[str, Any]:
         if not target and account:
             target = account
         if not target:
-            target = "Expenses:Misc"
+            target = "Expenses:Other"
         result["targetAccount"] = target
         result["account"] = target
 
@@ -205,11 +215,11 @@ def parse_classification_response(response: str) -> Dict[str, Any]:
     except json.JSONDecodeError:
         # Parse failed, return default values
         return {
-            "account": "Expenses:Misc",
-            "targetAccount": "Expenses:Misc",
+            "account": "Expenses:Other",
+            "targetAccount": "Expenses:Other",
             "methodAccount": "",
             "confidence": 0.0,
-            "reasoning": f"Parse failed: {response[:100]}",
+            "reasoning": f"Error: parse failed: {response[:100]}",
         }
 
 
@@ -226,16 +236,8 @@ def parse_batch_classification_response(response: str) -> List[Dict[str, Any]]:
     import json
     import re
 
-    # Try to extract JSON array part
-    json_match = re.search(r"\[[\s\S]*\]", response, re.DOTALL)
-    if json_match:
-        response = json_match.group()
-
-    try:
-        results = json.loads(response)
-        if not isinstance(results, list):
-            return []
-        # Ensure each result has required fields
+    def _normalize(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        normalized: List[Dict[str, Any]] = []
         for result in results:
             if not isinstance(result, dict):
                 continue
@@ -244,7 +246,7 @@ def parse_batch_classification_response(response: str) -> List[Dict[str, Any]]:
             if not target and account:
                 target = account
             if not target:
-                target = "Expenses:Misc"
+                target = "Expenses:Other"
             result["targetAccount"] = target
             result["account"] = target
             result["methodAccount"] = str(result.get("methodAccount", "")).strip()
@@ -252,7 +254,52 @@ def parse_batch_classification_response(response: str) -> List[Dict[str, Any]]:
                 result["confidence"] = 0.5
             if "reasoning" not in result:
                 result["reasoning"] = ""
-        return results
-    except json.JSONDecodeError:
-        # Parse failed, return empty list
-        return []
+            normalized.append(result)
+        return normalized
+
+    def _try_load(text: str):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return None
+
+    candidates: List[str] = []
+
+    # Extract fenced JSON blocks first.
+    for match in re.finditer(r"```(?:json)?\s*([\s\S]*?)```", response, re.IGNORECASE):
+        candidates.append(match.group(1))
+
+    # Add raw response.
+    candidates.append(response)
+
+    for text in list(candidates):
+        # Try JSON array part.
+        json_match = re.search(r"\[[\s\S]*\]", text, re.DOTALL)
+        if json_match:
+            candidates.append(json_match.group())
+        # Try JSON object part.
+        obj_match = re.search(r"\{[\s\S]*\}", text, re.DOTALL)
+        if obj_match:
+            candidates.append(obj_match.group())
+
+    # Attempt to parse candidates.
+    for text in candidates:
+        data = _try_load(text)
+        if isinstance(data, list):
+            return _normalize(data)
+        if isinstance(data, dict):
+            for key in ("results", "data", "items"):
+                if isinstance(data.get(key), list):
+                    return _normalize(data[key])
+
+    # Fallback: parse JSON objects line-by-line / mixed objects.
+    object_candidates: List[Dict[str, Any]] = []
+    for match in re.finditer(r"\{[\s\S]*?\}", response, re.DOTALL):
+        data = _try_load(match.group())
+        if isinstance(data, dict):
+            object_candidates.append(data)
+    if object_candidates:
+        return _normalize(object_candidates)
+
+    # Parse failed, return empty list
+    return []

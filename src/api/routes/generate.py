@@ -233,6 +233,10 @@ def _validate_required_accounts(transactions: list[dict]) -> list[dict[str, Any]
     for idx, tx in enumerate(transactions or [], start=1):
         if not isinstance(tx, dict):
             continue
+        # Backward compatibility: skip strict validation for raw import rows
+        # that don't carry any classification account fields yet.
+        if not any(key in tx for key in ("targetAccount", "methodAccount", "account")):
+            continue
         target = str(tx.get("targetAccount") or tx.get("account") or "").strip()
         method = str(tx.get("methodAccount") or "").strip()
         entry_issues: dict[str, str] = {}

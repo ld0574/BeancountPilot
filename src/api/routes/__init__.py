@@ -13,6 +13,8 @@ from src.api.routes import (
     ws,
     ai_config,
     chart_of_accounts,
+    progress,
+    maintenance,
 )
 
 __all__ = [
@@ -26,4 +28,6 @@ __all__ = [
     "ws",
     "ai_config",
     "chart_of_accounts",
+    "progress",
+    "maintenance",
 ]

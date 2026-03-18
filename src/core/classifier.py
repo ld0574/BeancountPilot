@@ -5,7 +5,7 @@ Classification coordinator - coordinates AI classification and rule engine
 import json
 import ast
 import re
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 
 from sqlalchemy.orm import Session
 
@@ -475,7 +475,7 @@ Expenses:Education:Books
 Expenses:Education:Courses
 Expenses:Travel:Hotels
 Expenses:Travel:Transport
-Expenses:Misc
+Expenses:Other
 Income:Salary
 Income:Investment
 Income:Other
@@ -590,7 +590,7 @@ Income:Other
         """Ensure account is valid and apply local food heuristics."""
         selected = str(account or "").strip()
         if not chart_accounts:
-            return selected or "Expenses:Misc"
+            return selected or "Expenses:Other"
 
         # Food heuristic first for explicit scenarios (e.g., breakfast vendors).
         suggested_food = self._suggest_food_account(transaction, chart_accounts)
@@ -607,7 +607,7 @@ Income:Other
                 if account_item.startswith(f"{top}:"):
                     return account_item
 
-        for fallback in ("Expenses:Misc", "Income:Other"):
+        for fallback in ("Expenses:Other", "Income:Other"):
             if fallback in chart_accounts:
                 return fallback
         return chart_accounts[0]
@@ -698,6 +698,9 @@ Income:Other
         transactions: List[Dict[str, Any]],
         chart_of_accounts: Optional[str] = None,
         language: str = "en",
+        progress_callback: Optional[Callable[[int], None]] = None,
+        deg_progress_callback: Optional[Callable[[int, int], None]] = None,
+        ai_progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Batch classify transactions
@@ -712,6 +715,8 @@ Income:Other
         chart_of_accounts_text = chart_of_accounts or self._get_chart_of_accounts()
         chart_accounts = self._parse_accounts(chart_of_accounts_text)
         deg_prefill_map = self._build_deg_prefill_map(transactions)
+        total_transactions = len(transactions)
+        deg_done = 0
 
         # First pass: DEG prefill -> local rule match -> AI.
         for tx in transactions:
@@ -738,6 +743,11 @@ Income:Other
                         "reasoning": "Matched DEG prefill",
                         "source": "rule",
                     })
+                    if progress_callback:
+                        progress_callback(1)
+                    deg_done += 1
+                    if deg_progress_callback:
+                        deg_progress_callback(deg_done, total_transactions)
                     continue
 
             # Check user rules
@@ -768,6 +778,11 @@ Income:Other
                         "reasoning": "Matched DEG rule",
                         "source": "rule",
                     })
+                    if progress_callback:
+                        progress_callback(1)
+                    deg_done += 1
+                    if deg_progress_callback:
+                        deg_progress_callback(deg_done, total_transactions)
                     continue
                 fallback_method = method_account
                 if self._is_empty_or_other_account(fallback_method):
@@ -778,23 +793,43 @@ Income:Other
                     "rule_prefill_method": fallback_method,
                     "rule_fallback": bool(fallback_method),
                 })
+                deg_done += 1
+                if deg_progress_callback:
+                    deg_progress_callback(deg_done, total_transactions)
                 continue
 
             # No matching rule, use AI
             results.append({"transaction": tx, "source": "ai"})
+            deg_done += 1
+            if deg_progress_callback:
+                deg_progress_callback(deg_done, total_transactions)
 
         # Batch classify transactions that need AI
         ai_transactions = [r["transaction"] for r in results if r["source"] == "ai"]
+        ai_total = len(ai_transactions)
+        ai_done = 0
+        if ai_progress_callback:
+            ai_progress_callback(ai_done, ai_total)
 
         if ai_transactions:
             provider = self._get_provider()
             historical_rules = self._get_historical_rules()
+
+            def _ai_progress(inc: int = 1) -> None:
+                nonlocal ai_done
+                inc_value = max(0, int(inc))
+                ai_done = min(ai_total, ai_done + inc_value)
+                if ai_progress_callback:
+                    ai_progress_callback(ai_done, ai_total)
+                if progress_callback and inc_value:
+                    progress_callback(inc_value)
 
             ai_results = await provider.batch_classify(
                 ai_transactions,
                 chart_of_accounts_text,
                 historical_rules,
                 language=language,
+                progress_callback=_ai_progress,
             )
 
             # Merge results

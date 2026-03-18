@@ -3,6 +3,7 @@ Transaction classification page
 """
 
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -48,63 +49,143 @@ def _localize_reasoning_text(reasoning: str) -> str:
     return text
 
 
-CLASSIFY_BATCH_SIZE = 10
-
-
-def _run_classification_with_progress(transactions) -> bool:
-    """Run backend classification in batches with real progress updates."""
+def _start_classification_job(transactions) -> bool:
+    """Start async classification job on backend."""
     total = len(transactions)
     if total == 0:
         st.warning(label("no_transactions_warning"))
         return False
+    if st.session_state.get("classify_job_id"):
+        st.info(label("classify_already_running"))
+        return False
 
-    progress = st.progress(0, text=f"{label('home_pipeline_progress')}: 0%")
-    processed = 0
-    classifications: list[dict] = []
-
-    ok = False
     try:
-        for start in range(0, total, CLASSIFY_BATCH_SIZE):
-            batch = transactions[start : start + CLASSIFY_BATCH_SIZE]
-            request_data = {
-                "transactions": batch,
-                "chart_of_accounts": st.session_state.get("chart_of_accounts", ""),
-                "provider": st.session_state.get("provider", "deepseek"),
-                "language": get_current_language(),
-            }
+        request_data = {
+            "transactions": transactions,
+            "chart_of_accounts": st.session_state.get("chart_of_accounts", ""),
+            "provider": st.session_state.get("provider", "deepseek"),
+            "language": get_current_language(),
+        }
 
-            response = requests.post(
-                get_api_url("/classify"),
-                json=request_data,
-                params={"provider": st.session_state.get("provider", "deepseek")},
-                timeout=get_api_timeout(),
-            )
-
-            if response.status_code != 200:
-                st.error(label("classify_failed", error=response.text))
-                return False
-
-            result = response.json()
-            batch_results = result.get("results") or []
-            classifications.extend(batch_results)
-            processed += len(batch)
-            percent = int(round(processed / total * 100))
-            progress.progress(percent, text=f"{label('home_pipeline_progress')}: {percent}%")
-
-        st.session_state.classifications = classifications
-        st.session_state.merged_data = merge_transactions_and_classifications(
-            transactions,
-            classifications,
+        response = requests.post(
+            get_api_url("/classify/async"),
+            json=request_data,
+            params={"provider": st.session_state.get("provider", "deepseek")},
+            timeout=max(get_api_timeout(), 120),
         )
+
+        if response.status_code != 200:
+            st.error(label("classify_failed", error=response.text))
+            return False
+
+        result = response.json()
+        st.session_state.classify_job_id = result.get("job_id")
+        st.session_state.classify_job_total = result.get("total", total)
         st.session_state.auto_classify_pending = False
-        st.success(label("classify_complete", count=len(classifications)))
-        ok = True
         return True
-    finally:
-        if ok:
-            progress.progress(100, text=f"{label('home_pipeline_progress')}: 100%")
+    except requests.exceptions.ConnectionError:
+        st.error(label("backend_not_connected"))
+        return False
+    except Exception as e:
+        st.error(label("classify_failed", error=str(e)))
+        return False
+
+
+def _poll_classification_job(transactions, deg_progress_placeholder, ai_progress_placeholder) -> None:
+    """Poll async classification job progress and update UI."""
+    job_id = st.session_state.get("classify_job_id")
+    if not job_id:
+        return
+
+    deg_progress = deg_progress_placeholder.progress(
+        0, text=f"{label('classify_pipeline_deg_progress')}: 0%"
+    )
+    ai_progress = None
+    try:
+        response = requests.get(
+            get_api_url(f"/classify/progress/{job_id}"),
+            timeout=min(get_api_timeout(), 5),
+        )
+        if response.status_code != 200:
+            st.error(label("classify_failed", error=response.text))
+            st.session_state.classify_job_id = None
+            return
+
+        status = response.json()
+        deg_done = int(status.get("deg_done", 0))
+        deg_total = int(status.get("deg_total", len(transactions)))
+        deg_percent = int(round(deg_done / deg_total * 100)) if deg_total else 0
+        deg_progress.progress(
+            deg_percent,
+            text=f"{label('classify_pipeline_deg_progress')}: {deg_percent}%",
+        )
+
+        ai_done = int(status.get("ai_done", 0))
+        ai_total = int(status.get("ai_total", 0))
+        if ai_total > 0:
+            if ai_progress is None:
+                ai_progress = ai_progress_placeholder.progress(
+                    0, text=f"{label('classify_pipeline_ai_progress')}: 0%"
+                )
+            ai_percent = int(round(ai_done / ai_total * 100))
+            ai_progress.progress(
+                ai_percent,
+                text=f"{label('classify_pipeline_ai_progress')}: {ai_percent}% ({ai_done}/{ai_total})",
+            )
         else:
-            progress.empty()
+            ai_progress_placeholder.empty()
+
+        done = int(status.get("done", 0))
+        total = int(status.get("total", st.session_state.get("classify_job_total", 0) or 0))
+        percent = int(round(done / total * 100)) if total else 0
+        st.session_state.classify_job_done = done
+        st.session_state.classify_job_total = total
+        st.session_state.classify_job_percent = percent
+
+        if status.get("status") == "error":
+            st.error(label("classify_failed", error=status.get("error", "")))
+            st.session_state.classify_job_id = None
+            deg_progress_placeholder.empty()
+            ai_progress_placeholder.empty()
+            return
+
+        if status.get("status") == "done":
+            result_resp = requests.get(
+                get_api_url(f"/classify/result/{job_id}"),
+                timeout=max(get_api_timeout(), 120),
+            )
+            if result_resp.status_code == 200:
+                result = result_resp.json()
+                classifications = result.get("results") or []
+                st.session_state.classifications = classifications
+                st.session_state.merged_data = merge_transactions_and_classifications(
+                    transactions,
+                    classifications,
+                )
+                st.session_state.persisted_tx_count = len(transactions)
+                st.session_state.persisted_classified_count = len(classifications)
+                st.success(label("classify_complete", count=len(classifications)))
+            else:
+                st.error(label("classify_failed", error=result_resp.text))
+            st.session_state.classify_job_id = None
+            deg_progress.progress(100, text=f"{label('classify_pipeline_deg_progress')}: 100%")
+            if ai_total > 0:
+                if ai_progress is None:
+                    ai_progress = ai_progress_placeholder.progress(
+                        0, text=f"{label('classify_pipeline_ai_progress')}: 0%"
+                    )
+                ai_progress.progress(100, text=f"{label('classify_pipeline_ai_progress')}: 100%")
+            deg_progress_placeholder.empty()
+            ai_progress_placeholder.empty()
+            return
+
+        # Still running; re-poll.
+        time.sleep(1)
+        st.rerun()
+    finally:
+        if st.session_state.get("classify_job_id"):
+            # Keep progress visible while running.
+            pass
 
 
 def _account_issue(account: str) -> str:
@@ -155,7 +236,7 @@ def _ensure_classification_df(merged_data):
         return df
 
     if "targetAccount" not in df.columns:
-        df["targetAccount"] = df.get("account", "Expenses:Misc")
+        df["targetAccount"] = df.get("account", "Expenses:Other")
     if "methodAccount" not in df.columns:
         df["methodAccount"] = ""
     if "confidence" not in df.columns:
@@ -519,28 +600,24 @@ def render():
     # Auto-run classification after upload/import.
     if st.session_state.get("auto_classify_pending", False):
         with st.spinner(label("classifying")):
-            try:
-                if _run_classification_with_progress(transactions):
-                    st.rerun()
-                st.session_state.auto_classify_pending = False
-            except requests.exceptions.ConnectionError:
-                st.error(label("backend_not_connected"))
-                st.session_state.auto_classify_pending = False
-            except Exception as e:
-                st.error(label("classify_failed", error=str(e)))
-                st.session_state.auto_classify_pending = False
+            if not st.session_state.get("classify_job_id"):
+                _start_classification_job(transactions)
+            st.session_state.auto_classify_pending = False
 
     # Execute classification
     if classify_button:
         with st.spinner(label("classifying")):
-            try:
-                if _run_classification_with_progress(transactions):
-                    st.rerun()
+            _start_classification_job(transactions)
 
-            except requests.exceptions.ConnectionError:
-                st.error(label("backend_not_connected"))
-            except Exception as e:
-                st.error(label("classify_failed", error=str(e)))
+    # Poll running classification job.
+    deg_progress_placeholder = st.empty()
+    ai_progress_placeholder = st.empty()
+    if st.session_state.get("classify_job_id"):
+        _poll_classification_job(
+            transactions,
+            deg_progress_placeholder,
+            ai_progress_placeholder,
+        )
 
     # Display classification results
     if "classifications" in st.session_state and st.session_state.classifications:
@@ -848,7 +925,7 @@ def render():
                     with st.spinner(label("generating")):
                         try:
                             generate_df = full_df.copy()
-                            generate_df["account"] = generate_df.get("targetAccount", "Expenses:Misc")
+                            generate_df["account"] = generate_df.get("targetAccount", "Expenses:Other")
 
                             request_data = {
                                 "transactions": generate_df.to_dict("records"),
@@ -967,7 +1044,7 @@ def merge_transactions_and_classifications(transactions, classifications):
             "amount": tx.get("amount", 0),
             "targetAccount": classification.get(
                 "targetAccount",
-                classification.get("account", "Expenses:Misc"),
+                classification.get("account", "Expenses:Other"),
             ),
             "methodAccount": classification.get("methodAccount", ""),
             "confidence": classification.get("confidence", 0),
@@ -1009,7 +1086,7 @@ def build_account_options(chart_of_accounts, rows=None):
             options.append(account)
 
     if not options:
-        return ["Expenses:Misc"]
+        return ["Expenses:Other"]
     return options
 
 def generate_beancount_preview(df):
@@ -1033,7 +1110,7 @@ def generate_beancount_preview(df):
 
         lines.append(f"{date_str} * \"{row.get('item', '')}\"")
         lines.append(
-            f"  {row.get('targetAccount', row.get('account', 'Expenses:Misc'))}  "
+            f"  {row.get('targetAccount', row.get('account', 'Expenses:Other'))}  "
             f"{row.get('amount', 0):.2f} CNY"
         )
         provider = row.get("provider", st.session_state.get("data_source", "alipay"))

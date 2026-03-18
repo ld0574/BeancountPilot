@@ -53,6 +53,7 @@ def save_yaml_config(file_path: Path, config: Dict[str, Any]) -> None:
         config: Configuration dictionary
     """
     ensure_config_dir()
+    file_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(file_path, "w", encoding="utf-8") as f:
         yaml.dump(config, f, allow_unicode=True, sort_keys=False)

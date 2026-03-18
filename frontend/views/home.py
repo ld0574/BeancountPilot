@@ -18,6 +18,13 @@ def render():
     """Render home page"""
     tx_count = len(st.session_state.get("transactions", []))
     cls_count = len(st.session_state.get("classifications") or [])
+    if st.session_state.get("classify_job_id"):
+        job_total = st.session_state.get("classify_job_total")
+        job_done = st.session_state.get("classify_job_done")
+        if isinstance(job_total, int) and job_total > 0:
+            tx_count = job_total
+        if isinstance(job_done, int):
+            cls_count = job_done
     ratio = (cls_count / tx_count * 100) if tx_count else 0
 
     st.markdown(

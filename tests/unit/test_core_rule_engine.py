@@ -108,7 +108,7 @@ class TestRuleEngine:
             engine.create_rule(
                 name=f"Rule {i}",
                 conditions={"peer": [f"Peer{i}"]},
-                account="Expenses:Misc",
+                account="Expenses:Other",
                 confidence=1.0,
                 source="user",
             )

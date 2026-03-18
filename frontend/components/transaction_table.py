@@ -107,7 +107,7 @@ class TransactionTable:
                 "type": tx.get("type", ""),
                 "time": tx.get("time", ""),
                 "amount": tx.get("amount", 0),
-                "account": classification.get("account", "Expenses:Misc"),
+                "account": classification.get("account", "Expenses:Other"),
                 "confidence": classification.get("confidence", 0),
                 "reasoning": classification.get("reasoning", ""),
                 "source": classification.get("source", "ai"),
@@ -138,7 +138,7 @@ class TransactionTable:
             seen.add(account)
             accounts.append(account)
 
-        return accounts if accounts else ["Expenses:Misc"]
+        return accounts if accounts else ["Expenses:Other"]
 
     def get_statistics(self):
         """Get statistics"""

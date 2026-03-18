@@ -46,6 +46,7 @@ class DeepSeekProvider(OpenAIProvider):
         chart_of_accounts: str,
         historical_rules: str,
         language: str = "en",
+        progress_callback=None,
     ) -> List[Dict[str, Any]]:
         """
         Batch classify transactions
@@ -63,4 +64,5 @@ class DeepSeekProvider(OpenAIProvider):
             chart_of_accounts,
             historical_rules,
             language=language,
+            progress_callback=progress_callback,
         )

@@ -3,7 +3,7 @@ AI Provider Abstract Base Class
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
 
 
 class BaseLLMProvider(ABC):
@@ -51,6 +51,7 @@ class BaseLLMProvider(ABC):
         chart_of_accounts: str,
         historical_rules: str,
         language: str = "en",
+        progress_callback: Optional[Callable[[int], None]] = None,
     ) -> list[Dict[str, Any]]:
         """
         Batch classify transactions

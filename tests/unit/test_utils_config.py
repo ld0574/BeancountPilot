@@ -250,9 +250,9 @@ class TestProvidersConfig:
         monkeypatch.setattr("src.utils.config.PROVIDERS_CONFIG_DIR", providers_dir)
         monkeypatch.setattr("src.utils.config.ensure_providers_dir", lambda: providers_dir.mkdir(parents=True, exist_ok=True))
 
-        save_provider_config("alipay", {"mapping": {"default": "Expenses:Misc"}})
+        save_provider_config("alipay", {"mapping": {"default": "Expenses:Other"}})
 
         saved_file = providers_dir / "alipay.yaml"
         assert saved_file.exists()
         loaded = load_yaml_config(saved_file)
-        assert loaded["mapping"]["default"] == "Expenses:Misc"
+        assert loaded["mapping"]["default"] == "Expenses:Other"

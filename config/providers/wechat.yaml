@@ -1,4 +1,4 @@
 mapping:
-  default: Expenses:Misc
+  default: Expenses:Other
 accounts:
   wechat: Assets:Bank:WeChat
