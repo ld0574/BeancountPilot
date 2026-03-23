@@ -323,6 +323,26 @@ async def generate_beancount(
         deg = _create_deg(db)
         rule_engine = RuleEngine(db)
         base_deg_config_yaml = rule_engine.export_deg_yaml(provider=request.provider)
+        deg_config_yaml = base_deg_config_yaml
+        session_rules = _build_session_deg_rules(request.transactions)
+        if session_rules:
+            try:
+                config_obj = yaml.safe_load(deg_config_yaml) or {}
+                if isinstance(config_obj, dict):
+                    provider_key = _normalize_provider_key(config_obj, request.provider or "alipay")
+                    provider_block = config_obj.get(provider_key)
+                    if not isinstance(provider_block, dict):
+                        provider_block = {}
+                    existing_rules = provider_block.get("rules", [])
+                    if not isinstance(existing_rules, list):
+                        existing_rules = []
+                    # Put session rules first to override fallback/legacy mappings.
+                    provider_block["rules"] = session_rules + existing_rules
+                    config_obj[provider_key] = provider_block
+                    deg_config_yaml = yaml.safe_dump(config_obj, allow_unicode=True, sort_keys=False)
+            except Exception:
+                # Keep original config on YAML merge failure.
+                deg_config_yaml = base_deg_config_yaml
 
         # Prefer raw passthrough generation from last uploaded CSV to preserve
         # original provider-specific columns and parsing behavior.
@@ -332,32 +352,11 @@ async def generate_beancount(
             result = deg.generate_beancount_from_csv_file(
                 csv_file=cached_csv,
                 provider=request.provider,
-                config_content=base_deg_config_yaml,
+                config_content=deg_config_yaml,
             )
 
         # Fallback to reconstructed CSV when raw upload cache is unavailable or failed.
         if not result or not result.get("success"):
-            deg_config_yaml = base_deg_config_yaml
-            session_rules = _build_session_deg_rules(request.transactions)
-            if session_rules:
-                try:
-                    config_obj = yaml.safe_load(deg_config_yaml) or {}
-                    if isinstance(config_obj, dict):
-                        provider_key = _normalize_provider_key(config_obj, request.provider or "alipay")
-                        provider_block = config_obj.get(provider_key)
-                        if not isinstance(provider_block, dict):
-                            provider_block = {}
-                        existing_rules = provider_block.get("rules", [])
-                        if not isinstance(existing_rules, list):
-                            existing_rules = []
-                        # Put session rules first to override fallback/legacy mappings.
-                        provider_block["rules"] = session_rules + existing_rules
-                        config_obj[provider_key] = provider_block
-                        deg_config_yaml = yaml.safe_dump(config_obj, allow_unicode=True, sort_keys=False)
-                except Exception:
-                    # Keep original config on YAML merge failure.
-                    pass
-
             result = deg.generate_beancount_from_transactions(
                 transactions=request.transactions,
                 provider=request.provider,
