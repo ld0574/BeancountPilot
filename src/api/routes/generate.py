@@ -1,6 +1,7 @@
 """Generation routes."""
 
 import json
+from pathlib import Path
 from typing import Dict, Any
 import yaml
 
@@ -153,6 +154,33 @@ def _get_deg_provider_aliases(db: Session) -> Dict[str, str]:
     return normalized
 
 
+def _provider_cache_keys(db: Session, provider: str) -> list[str]:
+    """Build candidate keys for looking up cached raw upload file path."""
+    raw_provider = str(provider or "").strip().lower() or "alipay"
+    aliases = get_default_provider_aliases()
+    aliases.update(_get_deg_provider_aliases(db))
+    normalized_provider = aliases.get(raw_provider, raw_provider)
+
+    keys = []
+    for key in (raw_provider, normalized_provider):
+        key = str(key or "").strip().lower()
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def _get_cached_raw_csv_path(db: Session, provider: str) -> Path | None:
+    """Get last uploaded raw CSV path for provider (if available)."""
+    for key in _provider_cache_keys(db, provider):
+        raw_path = UserConfigRepository.get(db, f"last_uploaded_file::{key}")
+        if not raw_path:
+            continue
+        csv_path = Path(raw_path)
+        if csv_path.exists() and csv_path.suffix.lower() == ".csv":
+            return csv_path
+    return None
+
+
 def _create_deg(db: Session | None = None) -> DoubleEntryGenerator:
     """Create DEG integration instance from app config."""
     executable = get_config("application.deg.executable", "double-entry-generator")
@@ -294,33 +322,47 @@ async def generate_beancount(
         # Create DEG integrator
         deg = _create_deg(db)
         rule_engine = RuleEngine(db)
-        deg_config_yaml = rule_engine.export_deg_yaml(provider=request.provider)
-        session_rules = _build_session_deg_rules(request.transactions)
-        if session_rules:
-            try:
-                config_obj = yaml.safe_load(deg_config_yaml) or {}
-                if isinstance(config_obj, dict):
-                    provider_key = _normalize_provider_key(config_obj, request.provider or "alipay")
-                    provider_block = config_obj.get(provider_key)
-                    if not isinstance(provider_block, dict):
-                        provider_block = {}
-                    existing_rules = provider_block.get("rules", [])
-                    if not isinstance(existing_rules, list):
-                        existing_rules = []
-                    # Put session rules first to override fallback/legacy mappings.
-                    provider_block["rules"] = session_rules + existing_rules
-                    config_obj[provider_key] = provider_block
-                    deg_config_yaml = yaml.safe_dump(config_obj, allow_unicode=True, sort_keys=False)
-            except Exception:
-                # Keep original config on YAML merge failure.
-                pass
+        base_deg_config_yaml = rule_engine.export_deg_yaml(provider=request.provider)
 
-        # Generate Beancount file
-        result = deg.generate_beancount_from_transactions(
-            transactions=request.transactions,
-            provider=request.provider,
-            config_content=deg_config_yaml,
-        )
+        # Prefer raw passthrough generation from last uploaded CSV to preserve
+        # original provider-specific columns and parsing behavior.
+        result = {}
+        cached_csv = _get_cached_raw_csv_path(db, request.provider)
+        if cached_csv is not None:
+            result = deg.generate_beancount_from_csv_file(
+                csv_file=cached_csv,
+                provider=request.provider,
+                config_content=base_deg_config_yaml,
+            )
+
+        # Fallback to reconstructed CSV when raw upload cache is unavailable or failed.
+        if not result or not result.get("success"):
+            deg_config_yaml = base_deg_config_yaml
+            session_rules = _build_session_deg_rules(request.transactions)
+            if session_rules:
+                try:
+                    config_obj = yaml.safe_load(deg_config_yaml) or {}
+                    if isinstance(config_obj, dict):
+                        provider_key = _normalize_provider_key(config_obj, request.provider or "alipay")
+                        provider_block = config_obj.get(provider_key)
+                        if not isinstance(provider_block, dict):
+                            provider_block = {}
+                        existing_rules = provider_block.get("rules", [])
+                        if not isinstance(existing_rules, list):
+                            existing_rules = []
+                        # Put session rules first to override fallback/legacy mappings.
+                        provider_block["rules"] = session_rules + existing_rules
+                        config_obj[provider_key] = provider_block
+                        deg_config_yaml = yaml.safe_dump(config_obj, allow_unicode=True, sort_keys=False)
+                except Exception:
+                    # Keep original config on YAML merge failure.
+                    pass
+
+            result = deg.generate_beancount_from_transactions(
+                transactions=request.transactions,
+                provider=request.provider,
+                config_content=deg_config_yaml,
+            )
 
         return GenerateResponse(
             success=result["success"],

@@ -84,16 +84,18 @@ async def classify_transactions(
             confidence = float(result.get("confidence", 0.0))
             reasoning = str(result.get("reasoning", ""))
             source = str(result.get("source", "ai"))
+            skip_generate = bool(result.get("skipGenerate", False))
 
-            # Save to database
-            classification = ClassificationRepository.create(
-                db=db,
-                transaction_id=transaction.get("id", ""),
-                account=account,
-                confidence=confidence,
-                source=source,
-                reasoning=reasoning,
-            )
+            # Save to database (skip transient offset-filter rows)
+            if source != "offset":
+                ClassificationRepository.create(
+                    db=db,
+                    transaction_id=transaction.get("id", ""),
+                    account=account,
+                    confidence=confidence,
+                    source=source,
+                    reasoning=reasoning,
+                )
 
             classification_results.append(
                 ClassificationResult(
@@ -104,6 +106,7 @@ async def classify_transactions(
                     confidence=confidence,
                     reasoning=reasoning,
                     source=source,
+                    skipGenerate=skip_generate,
                 )
             )
 
@@ -168,15 +171,17 @@ def _run_classify_job(job_id: str, payload: dict, provider: Optional[str]) -> No
             confidence = float(result.get("confidence", 0.0))
             reasoning = str(result.get("reasoning", ""))
             source = str(result.get("source", "ai"))
+            skip_generate = bool(result.get("skipGenerate", False))
 
-            ClassificationRepository.create(
-                db=db,
-                transaction_id=transaction.get("id", ""),
-                account=account,
-                confidence=confidence,
-                source=source,
-                reasoning=reasoning,
-            )
+            if source != "offset":
+                ClassificationRepository.create(
+                    db=db,
+                    transaction_id=transaction.get("id", ""),
+                    account=account,
+                    confidence=confidence,
+                    source=source,
+                    reasoning=reasoning,
+                )
 
             classification_results.append(
                 ClassificationResult(
@@ -187,6 +192,7 @@ def _run_classify_job(job_id: str, payload: dict, provider: Optional[str]) -> No
                     confidence=confidence,
                     reasoning=reasoning,
                     source=source,
+                    skipGenerate=skip_generate,
                 )
             )
 

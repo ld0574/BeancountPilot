@@ -63,6 +63,7 @@ class ClassificationResult(BaseModel):
     confidence: float = Field(..., ge=0.0, le=1.0)
     reasoning: str
     source: str
+    skipGenerate: bool = False
 
 
 class ClassificationResponse(BaseModel):

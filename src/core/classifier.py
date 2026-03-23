@@ -84,6 +84,92 @@ class Classifier:
             method_account = ""
         return target_account, method_account
 
+    def _select_rule_accounts(
+        self,
+        matched_rules: List[Any],
+    ) -> tuple[str, str, float]:
+        """
+        Select best target/method accounts from matched rules.
+
+        DEG configs often split target and method into separate rules.
+        This helper first prefers a single complete rule; otherwise it
+        merges target/method from the best matched rules by confidence.
+        """
+        if not matched_rules:
+            return "", "", 0.0
+
+        user_rules = [r for r in matched_rules if str(getattr(r, "source", "")).strip().lower() == "user"]
+        candidate_rules = user_rules or matched_rules
+
+        def _rule_specificity(rule: Any) -> int:
+            """
+            Heuristic specificity score for tie-breaking.
+
+            Prefer rules with more explicit conditions (e.g., peer+method)
+            over broad generic rules (e.g., method-only).
+            """
+            try:
+                conditions = json.loads(getattr(rule, "conditions", "") or "{}")
+            except Exception:
+                conditions = {}
+            if not isinstance(conditions, dict):
+                return 0
+
+            ignored = {
+                "provider",
+                "sep",
+                "_deg_only",
+                "_deg_has_target",
+                "fullMatch",
+                "description",
+            }
+            score = 0
+            for key, value in conditions.items():
+                if key in ignored or value in (None, "", []):
+                    continue
+                score += 1
+                if isinstance(value, list):
+                    score += min(len([v for v in value if str(v).strip()]), 3)
+            return score
+
+        complete_rules: List[tuple[float, int, str, str]] = []
+        target_rules: List[tuple[float, int, str]] = []
+        method_rules: List[tuple[float, int, str]] = []
+
+        for rule in candidate_rules:
+            target_account, method_account = self._extract_rule_accounts(rule)
+            confidence = float(getattr(rule, "confidence", 0.0) or 0.0)
+            specificity = _rule_specificity(rule)
+
+            target_valid = not self._is_empty_or_other_account(target_account)
+            method_valid = not self._is_empty_or_other_account(method_account)
+
+            if target_valid and method_valid:
+                complete_rules.append((confidence, specificity, target_account, method_account))
+            if target_valid:
+                target_rules.append((confidence, specificity, target_account))
+            if method_valid:
+                method_rules.append((confidence, specificity, method_account))
+
+        if complete_rules:
+            confidence, _, target_account, method_account = max(
+                complete_rules,
+                key=lambda item: (item[0], item[1]),
+            )
+            return target_account, method_account, confidence
+
+        target_confidence, _, target_account = (
+            max(target_rules, key=lambda item: (item[0], item[1]))
+            if target_rules
+            else (0.0, 0, "")
+        )
+        method_confidence, _, method_account = (
+            max(method_rules, key=lambda item: (item[0], item[1]))
+            if method_rules
+            else (0.0, 0, "")
+        )
+        return target_account, method_account, max(target_confidence, method_confidence)
+
     @staticmethod
     def _extract_tx_fields(transaction: Dict[str, Any]) -> Dict[str, str]:
         """Extract provider-specific raw fields from transaction.raw_data."""
@@ -157,6 +243,7 @@ class Classifier:
         tx_type_value = (
             parsed_dict.get("txType")
             or parsed_dict.get("transactionType")
+            or parsed_dict.get("交易类型")
             or parsed_dict.get("交易分类")
             or parsed_dict.get("消费分类")
             or ""
@@ -169,6 +256,94 @@ class Classifier:
             parsed_dict["txType"] = str(tx_type_value)
 
         return parsed_dict
+
+    @staticmethod
+    def _extract_order_key(tx_fields: Dict[str, str]) -> str:
+        """Extract stable merchant/order key for payment-refund pairing."""
+        for key in ("商家订单号", "商户单号", "merchantId", "交易订单号", "交易单号", "orderId"):
+            value = str(tx_fields.get(key, "")).strip()
+            if value:
+                # Refund rows may append suffix to the original order id.
+                return value.split("_", 1)[0]
+        return ""
+
+    @staticmethod
+    def _is_refund_like(transaction: Dict[str, Any], tx_fields: Dict[str, str]) -> bool:
+        """Detect refund-like rows from category/item/type/status signals."""
+        text = " ".join(
+            [
+                str(transaction.get("category", "") or ""),
+                str(transaction.get("item", "") or ""),
+                str(transaction.get("type", "") or ""),
+                str(tx_fields.get("交易状态", "") or ""),
+                str(tx_fields.get("status", "") or ""),
+            ]
+        )
+        lowered = text.lower()
+        return (
+            "退款" in text
+            or "退货" in text
+            or "refund" in lowered
+            or "退款成功" in text
+        )
+
+    @staticmethod
+    def _is_payment_like(transaction: Dict[str, Any], tx_fields: Dict[str, str]) -> bool:
+        """Detect payment-like rows that can be offset by refunds."""
+        text = " ".join(
+            [
+                str(transaction.get("type", "") or ""),
+                str(transaction.get("category", "") or ""),
+                str(tx_fields.get("交易状态", "") or ""),
+                str(tx_fields.get("status", "") or ""),
+            ]
+        )
+        lowered = text.lower()
+        if "支出" in text:
+            return True
+        # Some cancelled payments appear as closed but still represent payment side.
+        if "交易关闭" in text:
+            return True
+        return "payment" in lowered and "refund" not in lowered
+
+    def _detect_offset_pair_indices(self, transactions: List[Dict[str, Any]]) -> set[int]:
+        """
+        Detect transactions that form payment-refund offset pairs.
+
+        We only pair rows when a stable order key exists and the absolute amount matches.
+        """
+        groups: Dict[tuple[str, str, float], List[tuple[int, bool, bool]]] = {}
+
+        for idx, tx in enumerate(transactions):
+            tx_fields = self._extract_tx_fields(tx)
+            order_key = self._extract_order_key(tx_fields)
+            if not order_key:
+                continue
+
+            try:
+                amount = round(abs(float(tx.get("amount", 0.0) or 0.0)), 2)
+            except Exception:
+                amount = 0.0
+            if amount <= 0:
+                continue
+
+            provider = str(tx.get("provider", "") or "").strip().lower()
+            key = (provider, order_key, amount)
+            is_refund = self._is_refund_like(tx, tx_fields)
+            is_payment = self._is_payment_like(tx, tx_fields)
+            groups.setdefault(key, []).append((idx, is_refund, is_payment))
+
+        offset_indices: set[int] = set()
+        for entries in groups.values():
+            refund_idxs = [idx for idx, is_refund, _ in entries if is_refund]
+            payment_idxs = [idx for idx, _, is_payment in entries if is_payment]
+            if not refund_idxs or not payment_idxs:
+                continue
+            # Pair by count; mark the rows as offset and skip classification/generation.
+            pair_count = min(len(refund_idxs), len(payment_idxs))
+            offset_indices.update(refund_idxs[:pair_count])
+            offset_indices.update(payment_idxs[:pair_count])
+        return offset_indices
 
     def _get_auto_rule_confidence_threshold(self) -> float:
         """Confidence threshold for converting AI results into auto rules."""
@@ -644,21 +819,18 @@ Income:Other
         fallback_reason = ""
         fallback_method_account = ""
         if matched_rules:
-            user_rules = [r for r in matched_rules if r.source == "user"]
-            candidate_rules = user_rules or matched_rules
-            rule = max(candidate_rules, key=lambda r: r.confidence)
-            target_account, method_account = self._extract_rule_accounts(rule)
+            target_account, method_account, matched_confidence = self._select_rule_accounts(matched_rules)
             if self._has_complete_accounts(target_account, method_account):
                 return {
                     "account": target_account,
                     "targetAccount": target_account,
                     "methodAccount": method_account,
-                    "confidence": rule.confidence,
+                    "confidence": matched_confidence,
                     "reasoning": "Matched DEG rule",
                     "source": "rule",
                 }
             fallback_method_account = method_account
-            fallback_reason = "Matched DEG rule but account fields were incomplete; used AI fallback"
+            fallback_reason = "Matched DEG rule(s) but account fields were incomplete; used AI fallback"
 
         # 2. Use AI classification
         provider = self._get_provider()
@@ -715,11 +887,30 @@ Income:Other
         chart_of_accounts_text = chart_of_accounts or self._get_chart_of_accounts()
         chart_accounts = self._parse_accounts(chart_of_accounts_text)
         deg_prefill_map = self._build_deg_prefill_map(transactions)
+        offset_skip_indices = self._detect_offset_pair_indices(transactions)
         total_transactions = len(transactions)
         deg_done = 0
 
         # First pass: DEG prefill -> local rule match -> AI.
-        for tx in transactions:
+        for tx_index, tx in enumerate(transactions):
+            if tx_index in offset_skip_indices:
+                results.append({
+                    "transaction": tx,
+                    "account": "",
+                    "targetAccount": "",
+                    "methodAccount": "",
+                    "confidence": 1.0,
+                    "reasoning": "Filtered offsetting payment/refund pair",
+                    "source": "offset",
+                    "skipGenerate": True,
+                })
+                if progress_callback:
+                    progress_callback(1)
+                deg_done += 1
+                if deg_progress_callback:
+                    deg_progress_callback(deg_done, total_transactions)
+                continue
+
             tx_id_key = str(tx.get("id", "")).strip()
             if not tx_id_key:
                 tx_id_key = f"idx:{len(results)}"
@@ -764,17 +955,14 @@ Income:Other
             )
 
             if matched_rules:
-                user_rules = [r for r in matched_rules if r.source == "user"]
-                candidate_rules = user_rules or matched_rules
-                rule = max(candidate_rules, key=lambda r: r.confidence)
-                target_account, method_account = self._extract_rule_accounts(rule)
+                target_account, method_account, matched_confidence = self._select_rule_accounts(matched_rules)
                 if self._has_complete_accounts(target_account, method_account):
                     results.append({
                         "transaction": tx,
                         "account": target_account,
                         "targetAccount": target_account,
                         "methodAccount": method_account,
-                        "confidence": rule.confidence,
+                        "confidence": matched_confidence,
                         "reasoning": "Matched DEG rule",
                         "source": "rule",
                     })

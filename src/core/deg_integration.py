@@ -323,6 +323,44 @@ class DoubleEntryGenerator:
                 ).strip(),
             }
 
+    def generate_beancount_from_csv_file(
+        self,
+        csv_file: Path | str,
+        provider: str = "alipay",
+        config_content: Optional[str] = None,
+        deg_rules: Optional[list[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Generate Beancount directly from an existing raw CSV file.
+
+        This bypasses transaction re-serialization and preserves original export shape.
+        """
+        csv_path = Path(csv_file)
+        if not csv_path.exists():
+            return {
+                "success": False,
+                "message": f"CSV file not found: {csv_path}",
+            }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            provider = self._normalize_provider(provider)
+
+            config_file = temp_path / "config.yaml"
+            if config_content:
+                with open(config_file, "w", encoding="utf-8") as f:
+                    f.write(config_content)
+            else:
+                self._write_default_config(config_file, provider, deg_rules=deg_rules)
+
+            output_file = temp_path / "output.beancount"
+            return self.call_double_entry_generator(
+                csv_file=csv_path,
+                config_file=config_file,
+                output_file=output_file,
+                provider=provider,
+            )
+
     def _csv_encodings_for_provider(self, provider: str) -> list[str]:
         """Return encoding candidates for provider-specific CSV compatibility."""
         provider = self._normalize_provider(provider)

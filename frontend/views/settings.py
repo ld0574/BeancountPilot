@@ -6,6 +6,7 @@ import json
 import sys
 import uuid
 import html
+from importlib import metadata
 from pathlib import Path
 
 import streamlit as st
@@ -61,6 +62,16 @@ DEFAULT_AI_PROFILE_TEMPLATE = {
         "timeout": 30,
     },
 }
+
+
+def _get_installed_version(package: str, default: str = "-") -> str:
+    """Get installed package version from Python environment."""
+    try:
+        return metadata.version(package)
+    except metadata.PackageNotFoundError:
+        return default
+    except Exception:
+        return default
 
 
 def _get_ledger_data_dir() -> Path:
@@ -2287,11 +2298,13 @@ def render():
 
         # Version information
         st.markdown(f"### {label('version_info')}")
+        streamlit_version = getattr(st, "__version__", _get_installed_version("streamlit"))
+        fastapi_version = _get_installed_version("fastapi")
         st.info(f"""
         - **{t('beancountpilot')}**: v0.1.0
         - **{t('python')}**: 3.11+
-        - **{t('streamlit')}**: {t('latest')}
-        - **{t('fastapi')}**: {t('latest')}
+        - **{t('streamlit')}**: {streamlit_version}
+        - **{t('fastapi')}**: {fastapi_version}
         """)
 
     # DEG Mapping

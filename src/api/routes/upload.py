@@ -3,6 +3,9 @@
 import io
 import json
 import re
+import uuid
+from datetime import datetime
+from pathlib import Path
 from typing import List
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from sqlalchemy.orm import Session
@@ -19,6 +22,7 @@ from src.core.deg_catalog import (
 from src.utils.csv_table_parser import parse_csv_rows
 
 router = APIRouter()
+UPLOAD_CACHE_DIR = Path.home() / ".beancountpilot" / "data" / "uploads"
 
 
 def _load_user_provider_aliases(db: Session) -> dict[str, str]:
@@ -45,6 +49,41 @@ def _load_user_provider_aliases(db: Session) -> dict[str, str]:
             continue
         normalized[k] = v
     return normalized
+
+
+def _cache_uploaded_csv(
+    db: Session,
+    file_name: str,
+    content: bytes,
+    provider_keys: list[str],
+) -> None:
+    """
+    Cache uploaded raw CSV for later raw passthrough DEG generation.
+
+    Cache key: user_config["last_uploaded_file::<provider>"] = absolute_path
+    """
+    if not file_name.lower().endswith(".csv"):
+        return
+    if not content:
+        return
+
+    UPLOAD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file_name).suffix.lower() or ".csv"
+    stamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+    file_path = UPLOAD_CACHE_DIR / f"{stamp}-{uuid.uuid4().hex[:8]}{suffix}"
+    file_path.write_bytes(content)
+
+    seen = set()
+    for key in provider_keys:
+        normalized_key = str(key or "").strip().lower()
+        if not normalized_key or normalized_key in seen:
+            continue
+        seen.add(normalized_key)
+        UserConfigRepository.set(
+            db,
+            f"last_uploaded_file::{normalized_key}",
+            str(file_path),
+        )
 
 
 def _resolve_provider(provider: str, db: Session) -> tuple[str, str, bool]:
@@ -153,10 +192,20 @@ async def upload_csv(
         raise HTTPException(status_code=400, detail="Only CSV/XLS/XLSX files are supported")
 
     try:
-        _, provider, is_bank_style_provider = _resolve_provider(provider, db)
+        raw_provider, provider, is_bank_style_provider = _resolve_provider(provider, db)
 
         # Read file content
         content = await file.read()
+        try:
+            _cache_uploaded_csv(
+                db=db,
+                file_name=file.filename or "",
+                content=content,
+                provider_keys=[raw_provider, provider],
+            )
+        except Exception:
+            # Caching is best-effort and should not block upload parsing.
+            pass
         rows = _load_table_rows(file, content, provider=provider)
         transactions = []
 
@@ -200,6 +249,12 @@ async def upload_csv(
                 item = _pick_first(row, ["商品", "Description", "Item"], default=peer)
                 category = _pick_first(row, ["商品", "Transaction Category", "Category"], default=item)
                 transaction_type = _pick_first(row, ["收/支", "Income/Expense", "Type"])
+                tx_type_text = _pick_first(
+                    row,
+                    ["交易类型", "txType", "transactionType"],
+                )
+                if tx_type_text:
+                    normalized_row["txType"] = tx_type_text
                 time = _pick_first(row, ["交易时间", "Transaction Time", "Time"])
                 amount = _parse_amount(
                     _pick_first(row, ["金额(元)", "金额", "Amount", "amount"], default="0")

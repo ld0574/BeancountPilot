@@ -29,6 +29,7 @@ def _localize_reasoning_text(reasoning: str) -> str:
     exact_map = {
         "Matched DEG rule": label("reason_matched_deg_rule"),
         "Matched DEG prefill": label("reason_matched_deg_prefill"),
+        "Filtered offsetting payment/refund pair": label("reason_offset_filtered"),
     }
     if text in exact_map:
         return exact_map[text]
@@ -206,6 +207,8 @@ def _collect_invalid_account_rows(df: pd.DataFrame) -> list[dict]:
         return invalid_rows
 
     for idx, row in df.iterrows():
+        if bool(row.get("skipGenerate", False)):
+            continue
         target = str(row.get("targetAccount", "")).strip()
         method = str(row.get("methodAccount", "")).strip()
         issues = {}
@@ -247,6 +250,10 @@ def _ensure_classification_df(merged_data):
         df["reasoning"] = ""
     if "provider" not in df.columns:
         df["provider"] = ""
+    if "raw_data" not in df.columns:
+        df["raw_data"] = ""
+    if "skipGenerate" not in df.columns:
+        df["skipGenerate"] = False
 
     if "id" not in df.columns:
         df["id"] = [str(i) for i in range(1, len(df) + 1)]
@@ -263,8 +270,8 @@ def _split_rule_ai_rows(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         return df.copy(), df.copy()
 
     source_series = df["source"].astype(str).str.lower()
-    rule_df = df[source_series == "rule"].copy()
-    ai_df = df[source_series != "rule"].copy()
+    ai_df = df[source_series == "ai"].copy()
+    rule_df = df[source_series != "ai"].copy()
     return rule_df, ai_df
 
 
@@ -692,6 +699,8 @@ def render():
                     column_config={
                         "id": None,
                         "provider": None,
+                        "raw_data": None,
+                        "skipGenerate": None,
                         "peer": st.column_config.TextColumn(t("payee"), width="medium"),
                         "item": st.column_config.TextColumn(t("item_label"), width="medium"),
                         "category": st.column_config.TextColumn(label("classify_category"), width="small"),
@@ -729,6 +738,8 @@ def render():
                         "confidence",
                         "source",
                         "reasoning",
+                        "raw_data",
+                        "skipGenerate",
                     ],
                     hide_index=True,
                     key="classification_ai_editor",
@@ -890,6 +901,8 @@ def render():
                     column_config={
                         "id": None,
                         "provider": None,
+                        "raw_data": None,
+                        "skipGenerate": None,
                         "peer": st.column_config.TextColumn(t("payee"), width="medium"),
                         "item": st.column_config.TextColumn(t("item_label"), width="medium"),
                         "category": st.column_config.TextColumn(label("classify_category"), width="small"),
@@ -925,6 +938,11 @@ def render():
                     with st.spinner(label("generating")):
                         try:
                             generate_df = full_df.copy()
+                            if "skipGenerate" in generate_df.columns:
+                                generate_df = generate_df[~generate_df["skipGenerate"].astype(bool)].copy()
+                            if generate_df.empty:
+                                st.warning(label("no_data_to_generate"))
+                                st.stop()
                             generate_df["account"] = generate_df.get("targetAccount", "Expenses:Other")
 
                             request_data = {
@@ -1036,6 +1054,7 @@ def merge_transactions_and_classifications(transactions, classifications):
         merged.append({
             "id": tx_id,
             "provider": tx.get("provider", ""),
+            "raw_data": tx.get("raw_data", ""),
             "peer": tx.get("peer", ""),
             "item": tx.get("item", ""),
             "category": tx.get("category", ""),
@@ -1050,6 +1069,7 @@ def merge_transactions_and_classifications(transactions, classifications):
             "confidence": classification.get("confidence", 0),
             "reasoning": _localize_reasoning_text(classification.get("reasoning", "")),
             "source": classification.get("source", "ai"),
+            "skipGenerate": classification.get("skipGenerate", False),
         })
 
     return merged
