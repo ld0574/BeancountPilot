@@ -11,8 +11,43 @@ CSV_ENCODINGS = ("utf-8-sig", "utf-8", "gb18030", "gbk")
 CSV_DELIMITERS = [",", ";", "\t", "|"]
 
 PROVIDER_HEADER_HINTS: dict[str, list[str]] = {
-    "alipay": ["交易时间", "商品说明", "收/支", "金额", "交易对方"],
-    "wechat": ["交易时间", "商品", "收/支", "金额(元)", "交易类型", "交易对方"],
+    "alipay": [
+        "交易时间",
+        "商品说明",
+        "收/支",
+        "金额",
+        "交易对方",
+        # English-export Alipay headers
+        "Transaction Time",
+        "Transaction Category",
+        "Counterparty",
+        "Description",
+        "Income/Expense",
+        "Amount",
+        "Payment Method",
+        "Transaction Status",
+        "Transaction ID",
+        "Merchant Order ID",
+    ],
+    "wechat": [
+        "交易时间",
+        "商品",
+        "收/支",
+        "金额(元)",
+        "交易类型",
+        "交易对方",
+        # English-export WeChat headers (if enabled)
+        "Transaction Time",
+        "Product",
+        "Income/Expense",
+        "Amount(CNY)",
+        "Amount",
+        "Transaction Type",
+        "Counterparty",
+        "Status",
+        "Transaction ID",
+        "Merchant ID",
+    ],
 }
 
 GENERIC_HEADER_HINTS = [
@@ -159,4 +194,3 @@ def parse_csv_rows(content: bytes, provider: str = "") -> list[dict[str, Any]]:
         rows.append(dict(zip(header, row)))
 
     return rows
-
